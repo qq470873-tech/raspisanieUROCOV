@@ -26,6 +26,11 @@ export const env = {
   resendFrom: () => process.env.RESEND_FROM || "Расписание <onboarding@resend.dev>",
   teacherEmail: () => process.env.TEACHER_EMAIL || "",
 
-  // App
-  appUrl: () => process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  // App. Приоритет: заданный вручную URL → боевой домен Vercel → localhost.
+  appUrl: () => {
+    if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+    const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    if (vercel) return `https://${vercel}`;
+    return "http://localhost:3000";
+  },
 } as const;
