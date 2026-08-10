@@ -25,6 +25,17 @@ export const createSlotsSchema = z.object({
   slots: z.array(slotInputSchema).min(1, "Добавьте хотя бы один слот"),
 });
 
+/** Изменение времени существующего слота (сдвиг стрелками). */
+export const slotUpdateSchema = z
+  .object({
+    start_time: timeHHMM,
+    end_time: timeHHMM,
+  })
+  .refine((s) => s.end_time > s.start_time, {
+    message: "Конец должен быть позже начала",
+    path: ["end_time"],
+  });
+
 /** Заявка от родителя. student_1 = ФИО ученика. */
 export const bookingInputSchema = z.object({
   token: z.string().min(1),
@@ -41,12 +52,33 @@ export const bookingActionSchema = z.object({
   action: z.enum(["confirm", "reject", "delete", "cancel"]),
 });
 
-/** Перенос/предложение другого слота. */
-export const bookingMoveSchema = z.object({
-  booking_id: z.string().uuid(),
-  target_slot_id: z.string().uuid(),
-  mode: z.enum(["move", "propose"]), // move — сразу перенести; propose — предложить ученику
-});
+/** Кастомное время, заданное преподавателем вручную. */
+export const customTimeSchema = z
+  .object({
+    weekday: z.number().int().min(1).max(7),
+    start_time: timeHHMM,
+    end_time: timeHHMM,
+  })
+  .refine((s) => s.end_time > s.start_time, {
+    message: "Конец должен быть позже начала",
+    path: ["end_time"],
+  });
+
+/**
+ * Перенос/предложение времени. Цель — либо существующий слот (target_slot_id),
+ * либо заданное вручную время (custom_time). force=true игнорирует пересечения.
+ */
+export const bookingMoveSchema = z
+  .object({
+    booking_id: z.string().uuid(),
+    mode: z.enum(["move", "propose"]), // move — сразу перенести; propose — предложить ученику
+    target_slot_id: z.string().uuid().optional(),
+    custom_time: customTimeSchema.optional(),
+    force: z.boolean().optional(),
+  })
+  .refine((d) => d.target_slot_id || d.custom_time, {
+    message: "Укажите слот или время",
+  });
 
 /** Ответ ученика на предложение. */
 export const proposalResponseSchema = z.object({

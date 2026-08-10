@@ -12,9 +12,17 @@ export async function POST(request: Request) {
   const parsed = bookingMoveSchema.safeParse(body);
   if (!parsed.success) return badRequest("Некорректный запрос");
 
-  const { booking_id, target_slot_id, mode } = parsed.data;
-  const result = await moveBooking(booking_id, target_slot_id, mode);
+  const { booking_id, target_slot_id, custom_time, mode, force } = parsed.data;
+  const result = await moveBooking({
+    bookingId: booking_id,
+    mode,
+    targetSlotId: target_slot_id,
+    customTime: custom_time,
+    force,
+  });
   if (!result.ok) {
+    if (result.reason === "overlap")
+      return json({ error: "overlap", conflicts: result.conflicts }, 409);
     if (result.reason === "taken") return json({ error: "Целевой слот занят" }, 409);
     return json({ error: "Слот недоступен" }, 409);
   }

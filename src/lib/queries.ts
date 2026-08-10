@@ -6,6 +6,7 @@ import {
   type Booking,
   type Slot,
   type SlotWithBooking,
+  rangesOverlap,
   timeToMinutes,
 } from "./domain";
 import type { SlotInput } from "./schemas";
@@ -15,6 +16,11 @@ function randomToken(bytes = 16): string {
 }
 
 export type BookingWithSlot = Booking & { slot: Slot };
+
+/** ФИО ученика(ов) заявки одной строкой. */
+export function bookingNames(b: Pick<Booking, "student_1" | "student_2">): string {
+  return b.student_2 ? `${b.student_1} + ${b.student_2}` : b.student_1;
+}
 
 // ── Настройки / универсальная ссылка ────────────────────────────────────────────
 
@@ -97,6 +103,20 @@ export async function deleteSlot(id: string): Promise<void> {
 export async function setSlotActive(id: string, isActive: boolean): Promise<void> {
   const db = supabaseAdmin();
   await db.from("slots").update({ is_active: isActive }).eq("id", id);
+}
+
+/** Меняет время существующего слота (сдвиг стрелками у преподавателя). */
+export async function updateSlotTime(
+  id: string,
+  startTime: string,
+  endTime: string,
+): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db
+    .from("slots")
+    .update({ start_time: startTime, end_time: endTime })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 // ── Заявки ─────────────────────────────────────────────────────────────────────
@@ -195,31 +215,99 @@ export async function deleteBooking(id: string): Promise<void> {
   await db.from("bookings").delete().eq("id", id);
 }
 
-export type MoveResult = { ok: true } | { ok: false; reason: "taken" | "slot_unavailable" };
+export type MoveResult =
+  | { ok: true }
+  | { ok: false; reason: "taken" | "slot_unavailable" }
+  | { ok: false; reason: "overlap"; conflicts: string[] };
 
 /**
- * Переносит заявку в другой слот.
- * mode "move" — сразу переносит (статус confirmed).
- * mode "propose" — предлагает ученику (статус proposed, ждём ответа).
+ * Активные заявки, чьё время пересекается с заданным интервалом того же дня.
+ * Исключает саму переносимую заявку.
  */
-export async function moveBooking(
-  bookingId: string,
-  targetSlotId: string,
-  mode: "move" | "propose",
-): Promise<MoveResult> {
+export async function findOverlappingBookings(
+  weekday: number,
+  startTime: string,
+  endTime: string,
+  excludeBookingId: string,
+): Promise<BookingWithSlot[]> {
   const db = supabaseAdmin();
+  const { data } = await db
+    .from("bookings")
+    .select("*, slot:slots(*)")
+    .in("status", ACTIVE_STATUSES);
+  return ((data ?? []) as BookingWithSlot[]).filter(
+    (b) =>
+      b.id !== excludeBookingId &&
+      b.slot.weekday === weekday &&
+      rangesOverlap(startTime, endTime, b.slot.start_time, b.slot.end_time),
+  );
+}
 
-  const { data: slot } = await db
-    .from("slots")
-    .select("*")
-    .eq("id", targetSlotId)
-    .maybeSingle();
-  if (!slot || !(slot as Slot).is_active) return { ok: false, reason: "slot_unavailable" };
+export interface MoveBookingInput {
+  bookingId: string;
+  mode: "move" | "propose";
+  targetSlotId?: string;
+  customTime?: { weekday: number; start_time: string; end_time: string };
+  force?: boolean;
+}
+
+/**
+ * Переносит заявку в другой слот или в заданное вручную время.
+ * mode "move" — сразу переносит (confirmed); "propose" — предлагает ученику (proposed).
+ * Для custom-времени создаётся новый слот. При пересечении с чужой активной
+ * записью и force=false возвращает reason "overlap" со списком имён.
+ */
+export async function moveBooking(input: MoveBookingInput): Promise<MoveResult> {
+  const db = supabaseAdmin();
+  const { bookingId, mode, targetSlotId, customTime, force } = input;
+
+  // Определяем целевое время (день + интервал).
+  let weekday: number;
+  let startTime: string;
+  let endTime: string;
+
+  if (customTime) {
+    weekday = customTime.weekday;
+    startTime = customTime.start_time;
+    endTime = customTime.end_time;
+  } else if (targetSlotId) {
+    const { data: slot } = await db
+      .from("slots")
+      .select("*")
+      .eq("id", targetSlotId)
+      .maybeSingle();
+    if (!slot || !(slot as Slot).is_active) return { ok: false, reason: "slot_unavailable" };
+    weekday = (slot as Slot).weekday;
+    startTime = (slot as Slot).start_time;
+    endTime = (slot as Slot).end_time;
+  } else {
+    return { ok: false, reason: "slot_unavailable" };
+  }
+
+  // Проверка пересечений (если не forced).
+  if (!force) {
+    const conflicts = await findOverlappingBookings(weekday, startTime, endTime, bookingId);
+    if (conflicts.length > 0) {
+      return { ok: false, reason: "overlap", conflicts: conflicts.map(bookingNames) };
+    }
+  }
+
+  // Для custom-времени создаём новый слот.
+  let slotId = targetSlotId;
+  if (customTime) {
+    const { data: newSlot, error: slotErr } = await db
+      .from("slots")
+      .insert({ weekday, start_time: startTime, end_time: endTime, is_active: true })
+      .select("*")
+      .single();
+    if (slotErr) throw new Error(slotErr.message);
+    slotId = (newSlot as Slot).id;
+  }
 
   const { error } = await db
     .from("bookings")
     .update({
-      slot_id: targetSlotId,
+      slot_id: slotId,
       status: mode === "move" ? "confirmed" : "proposed",
       student_seen: false,
     })

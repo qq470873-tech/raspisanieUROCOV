@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Plus, Trash2 } from "lucide-react";
 import { apiPost, apiSend } from "@/lib/client";
 import {
   WEEKDAYS,
   formatRange,
   formatTime,
+  shiftTime,
+  timeToMinutes,
   type SlotWithBooking,
 } from "@/lib/domain";
 import { Button } from "@/components/ui/button";
@@ -60,6 +62,26 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function shiftSlot(slot: SlotWithBooking, delta: number) {
+    const newStart = shiftTime(slot.start_time, delta);
+    const newEnd = shiftTime(slot.end_time, delta);
+    const duration = timeToMinutes(slot.end_time) - timeToMinutes(slot.start_time);
+    // Если упёрлись в границу суток — длительность изменится, значит двигать некуда.
+    if (timeToMinutes(newEnd) - timeToMinutes(newStart) !== duration) {
+      toast.info(delta < 0 ? "Уже начало суток" : "Уже конец суток");
+      return;
+    }
+    try {
+      await apiSend(`/api/slots/${slot.id}`, "PATCH", {
+        start_time: newStart,
+        end_time: newEnd,
+      });
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
     }
   }
 
@@ -170,7 +192,7 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
                       <span className="tabular-nums">
                         {formatRange(slot.start_time, slot.end_time)}
                       </span>
-                      <span className="flex items-center gap-2">
+                      <span className="flex items-center gap-1.5">
                         {slot.booking && (
                           <span className="truncate text-xs">
                             {slot.booking.student_2
@@ -178,6 +200,22 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
                               : slot.booking.student_1}
                           </span>
                         )}
+                        <span className="flex items-center opacity-40 transition-opacity group-hover:opacity-100">
+                          <button
+                            onClick={() => shiftSlot(slot, -30)}
+                            className="rounded p-0.5 hover:bg-foreground/10"
+                            title="Раньше на 30 мин"
+                          >
+                            <ChevronUp className="size-3.5" />
+                          </button>
+                          <button
+                            onClick={() => shiftSlot(slot, 30)}
+                            className="rounded p-0.5 hover:bg-foreground/10"
+                            title="Позже на 30 мин"
+                          >
+                            <ChevronDown className="size-3.5" />
+                          </button>
+                        </span>
                         <button
                           onClick={() => removeSlot(slot)}
                           className="opacity-40 transition-opacity hover:opacity-100"

@@ -82,6 +82,32 @@ export function timeToMinutes(time: string): number {
   return h * 60 + m;
 }
 
+/** Минуты от полуночи -> "HH:MM". */
+export function minutesToTime(total: number): string {
+  const clamped = Math.max(0, Math.min(24 * 60, total));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** Сдвигает время "HH:MM[:SS]" на delta минут, обрезая по границам суток. Возвращает "HH:MM". */
+export function shiftTime(time: string, delta: number): string {
+  return minutesToTime(timeToMinutes(time) + delta);
+}
+
+/** Пересекаются ли два интервала времени (в пределах одного дня). */
+export function rangesOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): boolean {
+  return (
+    timeToMinutes(aStart) < timeToMinutes(bEnd) &&
+    timeToMinutes(bStart) < timeToMinutes(aEnd)
+  );
+}
+
 export const STATUS_LABELS: Record<BookingStatus, string> = {
   pending: "Ожидает подтверждения",
   confirmed: "Подтверждено",

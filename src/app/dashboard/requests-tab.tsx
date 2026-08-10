@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Check, X, Trash2, CalendarClock, Unlock } from "lucide-react";
+import { AlertTriangle, Check, X, Trash2, CalendarClock, Unlock } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import {
   STATUS_LABELS,
+  WEEKDAYS,
   formatRange,
+  formatTime,
   weekdayLong,
   type BookingStatus,
   type Slot,
@@ -16,6 +18,15 @@ import type { BookingWithSlot } from "@/lib/queries";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -145,6 +156,14 @@ export function RequestsTab({
   );
 }
 
+type MovePayload = {
+  booking_id: string;
+  mode: "move" | "propose";
+  target_slot_id?: string;
+  custom_time?: { weekday: number; start_time: string; end_time: string };
+  force?: boolean;
+};
+
 function MoveDialog({
   state,
   freeSlots,
@@ -157,20 +176,44 @@ function MoveDialog({
   onDone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [weekday, setWeekday] = useState("1");
+  const [start, setStart] = useState("15:00");
+  const [end, setEnd] = useState("16:00");
+  const [warn, setWarn] = useState<{ conflicts: string[]; payload: MovePayload } | null>(null);
   const open = state !== null;
   const mode = state?.mode ?? "move";
 
-  async function choose(slotId: string) {
+  // При открытии подставляем текущее время заявки как отправную точку.
+  useEffect(() => {
     if (!state) return;
+    setWeekday(String(state.booking.slot.weekday));
+    setStart(formatTime(state.booking.slot.start_time));
+    setEnd(formatTime(state.booking.slot.end_time));
+    setWarn(null);
+  }, [state]);
+
+  async function run(payload: MovePayload) {
     setBusy(true);
     try {
-      await apiPost("/api/bookings/move", {
-        booking_id: state.booking.id,
-        target_slot_id: slotId,
-        mode: state.mode,
+      const res = await fetch("/api/bookings/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-      toast.success(mode === "propose" ? "Предложение отправлено" : "Перенесено");
-      onDone();
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        conflicts?: string[];
+      };
+      if (res.ok) {
+        toast.success(mode === "propose" ? "Предложение отправлено" : "Перенесено");
+        onDone();
+        return;
+      }
+      if (res.status === 409 && data.error === "overlap") {
+        setWarn({ conflicts: data.conflicts ?? [], payload });
+        return;
+      }
+      toast.error(data.error ?? "Ошибка");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
     } finally {
@@ -178,37 +221,123 @@ function MoveDialog({
     }
   }
 
+  function base(): MovePayload {
+    return { booking_id: state!.booking.id, mode: state!.mode };
+  }
+
+  function chooseSlot(slotId: string) {
+    run({ ...base(), target_slot_id: slotId });
+  }
+
+  function submitCustom() {
+    if (end <= start) {
+      toast.error("Конец должен быть позже начала");
+      return;
+    }
+    run({ ...base(), custom_time: { weekday: Number(weekday), start_time: start, end_time: end } });
+  }
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {mode === "propose" ? "Предложить другое время" : "Перенести на другое время"}
-          </DialogTitle>
-          <DialogDescription>
-            {mode === "propose"
-              ? "Ученик получит предложение и сможет принять или отклонить его."
-              : "Заявка сразу переедет в выбранный свободный слот."}
-          </DialogDescription>
-        </DialogHeader>
-
-        {freeSlots.length === 0 ? (
-          <p className="py-4 text-sm text-muted-foreground">Нет свободных слотов.</p>
-        ) : (
-          <div className="grid max-h-80 grid-cols-2 gap-2 overflow-y-auto py-1">
-            {freeSlots.map((s) => (
-              <Button
-                key={s.id}
-                variant="outline"
-                disabled={busy}
-                onClick={() => choose(s.id)}
-                className="h-auto flex-col items-start gap-0.5 py-2"
-              >
-                <span className="text-xs text-muted-foreground">{weekdayLong(s.weekday)}</span>
-                <span className="tabular-nums">{formatRange(s.start_time, s.end_time)}</span>
+        {warn ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-amber-600">
+                <AlertTriangle className="size-5" /> Время пересекается
+              </DialogTitle>
+              <DialogDescription>
+                В это время уже есть запись:{" "}
+                <span className="font-medium text-foreground">{warn.conflicts.join(", ")}</span>.
+                Всё равно продолжить?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" disabled={busy} onClick={() => setWarn(null)}>
+                Изменить время
               </Button>
-            ))}
-          </div>
+              <Button disabled={busy} onClick={() => run({ ...warn.payload, force: true })}>
+                Всё равно продолжить
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>
+                {mode === "propose" ? "Предложить другое время" : "Перенести на другое время"}
+              </DialogTitle>
+              <DialogDescription>
+                {mode === "propose"
+                  ? "Ученик получит предложение и сможет принять или отклонить его."
+                  : "Заявка переедет на выбранное время."}
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* Ручной ввод времени */}
+            <div className="rounded-xl border border-border bg-muted/40 p-3">
+              <p className="mb-2 text-sm font-medium">Задать своё время</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">День</Label>
+                  <Select value={weekday} onValueChange={(v) => v && setWeekday(v)}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {WEEKDAYS.map((d) => (
+                        <SelectItem key={d.value} value={String(d.value)}>
+                          {d.long}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Начало</Label>
+                  <Input
+                    type="time"
+                    value={start}
+                    onChange={(e) => setStart(e.target.value)}
+                    className="w-28"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Конец</Label>
+                  <Input
+                    type="time"
+                    value={end}
+                    onChange={(e) => setEnd(e.target.value)}
+                    className="w-28"
+                  />
+                </div>
+                <Button disabled={busy} onClick={submitCustom}>
+                  {mode === "propose" ? "Предложить" : "Перенести"}
+                </Button>
+              </div>
+            </div>
+
+            {/* Быстрый выбор из свободных слотов */}
+            {freeSlots.length > 0 && (
+              <div>
+                <p className="mb-2 text-sm font-medium">Или выбрать из свободных</p>
+                <div className="grid max-h-56 grid-cols-2 gap-2 overflow-y-auto py-1">
+                  {freeSlots.map((s) => (
+                    <Button
+                      key={s.id}
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => chooseSlot(s.id)}
+                      className="h-auto flex-col items-start gap-0.5 py-2"
+                    >
+                      <span className="text-xs text-muted-foreground">{weekdayLong(s.weekday)}</span>
+                      <span className="tabular-nums">{formatRange(s.start_time, s.end_time)}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </DialogContent>
     </Dialog>
