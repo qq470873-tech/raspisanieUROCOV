@@ -214,9 +214,9 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
                       <span className="flex items-center gap-1.5">
                         {slot.booking ? (
                           <span className="truncate text-xs">
-                            {slot.booking.student_2
-                              ? `${slot.booking.student_1} + ${slot.booking.student_2}`
-                              : slot.booking.student_1}
+                            {[slot.booking.student_1, slot.booking.student_2, slot.booking.student_3]
+                              .filter(Boolean)
+                              .join(" + ")}
                           </span>
                         ) : slot.pendingCount > 0 ? (
                           <span className="truncate text-xs">

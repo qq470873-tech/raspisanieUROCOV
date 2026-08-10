@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, Check, X, Trash2, CalendarClock, Plus, Unlock, Users } from "lucide-react";
+import { AlertTriangle, Check, X, Trash2, CalendarClock, Plus, Unlock, UserMinus, Users } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import {
   STATUS_LABELS,
@@ -45,7 +45,7 @@ const STATUS_VARIANT: Record<BookingStatus, string> = {
 };
 
 function names(b: BookingWithSlot) {
-  return b.student_2 ? `${b.student_1} + ${b.student_2}` : b.student_1;
+  return [b.student_1, b.student_2, b.student_3].filter(Boolean).join(" + ");
 }
 
 type StudentOption = { id: string; name: string };
@@ -72,6 +72,16 @@ export function RequestsTab({
     try {
       await apiPost("/api/bookings/action", { booking_id, action });
       toast.success("Готово");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    }
+  }
+
+  async function unpair(booking_id: string) {
+    try {
+      await apiPost("/api/bookings/unpair", { booking_id });
+      toast.success("Участник убран");
       router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
@@ -159,19 +169,25 @@ export function RequestsTab({
               </Button>
             </>
           )}
-          {(b.status === "pending" || b.status === "confirmed") && !b.partner_student_id && (
+          {(b.status === "pending" || b.status === "confirmed") && !b.partner2_student_id && (
             <Button size="sm" variant="outline" onClick={() => setPairFor(b)} className="gap-1">
-              <Users className="size-4" /> Сделать парным
+              <Users className="size-4" />
+              {b.partner_student_id ? "Добавить третьего" : "Сделать парным"}
+            </Button>
+          )}
+          {b.partner_student_id && (
+            <Button size="sm" variant="outline" onClick={() => unpair(b.id)} className="gap-1">
+              <UserMinus className="size-4" /> Разъединить
             </Button>
           )}
           <Button
-            size="icon"
-            variant="ghost"
+            size="sm"
+            variant="outline"
             onClick={() => act(b.id, "delete")}
-            title="Удалить"
-            className="text-muted-foreground"
+            title="Удалить заявку"
+            className="gap-1 text-muted-foreground"
           >
-            <Trash2 className="size-4" />
+            <Trash2 className="size-4" /> Удалить
           </Button>
         </div>
       </Card>
@@ -426,16 +442,20 @@ function PairDialog({
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState("");
   const open = booking !== null;
+  const isThird = !!booking?.partner_student_id;
 
-  // Себя (основного ученика) из списка исключаем.
-  const options = students.filter((s) => s.id !== booking?.student_id);
+  // Исключаем уже участвующих (основного и добавленных).
+  const current = new Set(
+    [booking?.student_id, booking?.partner_student_id, booking?.partner2_student_id].filter(Boolean) as string[],
+  );
+  const options = students.filter((s) => !current.has(s.id));
 
   async function pair(payload: { student_id?: string; name?: string }) {
     if (!booking) return;
     setBusy(true);
     try {
       await apiPost("/api/bookings/pair", { booking_id: booking.id, ...payload });
-      toast.success("Занятие стало парным");
+      toast.success(isThird ? "Третий ученик добавлен" : "Занятие стало парным");
       onDone();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
@@ -448,13 +468,13 @@ function PairDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Второй ученик (парное занятие)</DialogTitle>
+          <DialogTitle>{isThird ? "Третий ученик (тройка)" : "Второй ученик (пара)"}</DialogTitle>
           <DialogDescription>
             {booking &&
-              `${booking.student_1} · ${weekdayLong(booking.slot.weekday)}, ${formatRange(
+              `${names(booking)} · ${weekdayLong(booking.slot.weekday)}, ${formatRange(
                 booking.slot.start_time,
                 booking.slot.end_time,
-              )}. Второй ученик получит уведомление.`}
+              )}. Новый ученик получит уведомление.`}
           </DialogDescription>
         </DialogHeader>
 

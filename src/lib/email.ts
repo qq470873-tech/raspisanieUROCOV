@@ -18,8 +18,8 @@ async function send(to: string, subject: string, html: string): Promise<void> {
   }
 }
 
-function studentNames(b: Pick<Booking, "student_1" | "student_2">): string {
-  return b.student_2 ? `${b.student_1} + ${b.student_2}` : b.student_1;
+function studentNames(b: Pick<Booking, "student_1" | "student_2" | "student_3">): string {
+  return [b.student_1, b.student_2, b.student_3].filter(Boolean).join(" + ");
 }
 
 function when(slot: Slot): string {

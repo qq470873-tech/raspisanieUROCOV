@@ -60,14 +60,17 @@ export function StudentApp({
   const myIds = new Set(students.map((s) => s.id));
   const isMyPrimary = (b: BookingWithSlot) => !!b.student_id && myIds.has(b.student_id);
 
-  // Подпись заявки: основная запись ребёнка или роль партнёра в парном занятии.
+  // Подпись заявки: основная запись ребёнка или роль участника группового занятия.
   function bookingLabel(b: BookingWithSlot): string {
+    const all = [b.student_1, b.student_2, b.student_3].filter(Boolean) as string[];
     if (isMyPrimary(b)) {
-      return b.student_2 ? `${b.student_1} + ${b.student_2} (пара)` : b.student_1;
+      const kind = all.length === 3 ? " (тройка)" : all.length === 2 ? " (пара)" : "";
+      return all.join(" + ") + kind;
     }
-    // Мой ребёнок — партнёр по парному занятию.
-    const mine = students.find((s) => s.id === b.partner_student_id);
-    return `${mine?.name ?? "Ваш ребёнок"} · парное с ${b.student_1}`;
+    // Мой ребёнок — участник группового занятия.
+    const mine = students.find((s) => s.id === b.partner_student_id || s.id === b.partner2_student_id);
+    const others = all.filter((n) => n !== mine?.name).join(", ");
+    return `${mine?.name ?? "Ваш ребёнок"} · групповое с ${others}`;
   }
 
   const activeCount = bookings.filter((b) =>

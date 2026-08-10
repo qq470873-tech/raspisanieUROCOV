@@ -17,7 +17,8 @@ export async function POST(request: Request) {
   const { booking_id, student_id, name } = parsed.data;
   const result = await setBookingPartner(booking_id, { studentId: student_id, name });
   if (!result.ok) {
-    if (result.reason === "self") return json({ error: "Это тот же ученик" }, 409);
+    if (result.reason === "self") return json({ error: "Этот ученик уже в занятии" }, 409);
+    if (result.reason === "full") return json({ error: "В занятии уже трое" }, 409);
     return json({ error: "Ученик не найден" }, 404);
   }
 

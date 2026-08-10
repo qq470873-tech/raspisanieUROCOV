@@ -20,11 +20,14 @@ export default async function BookPage({
 }) {
   const { token } = await params;
   const currentToken = await getBookingToken();
-  if (token !== currentToken) notFound();
 
   const householdId = await getHouseholdId();
   const students = householdId ? await getStudentsByHousehold(householdId) : [];
   const registered = students.length > 0;
+
+  // Уже зарегистрированные заходят по своей сессии даже при смене ссылки.
+  // Новым нужен актуальный токен ссылки.
+  if (!registered && token !== currentToken) notFound();
 
   const [slots, bookings] = registered
     ? await Promise.all([getAvailableSlots(), getBookingsForHousehold(householdId!)])

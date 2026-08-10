@@ -27,8 +27,10 @@ export interface Booking {
   slot_id: string;
   student_id: string | null;
   partner_student_id: string | null;
+  partner2_student_id: string | null;
   student_1: string;
   student_2: string | null;
+  student_3: string | null;
   comment: string | null;
   email: string | null;
   status: BookingStatus;

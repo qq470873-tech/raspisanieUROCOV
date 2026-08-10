@@ -18,9 +18,11 @@ function randomToken(bytes = 16): string {
 
 export type BookingWithSlot = Booking & { slot: Slot };
 
-/** ФИО ученика(ов) заявки одной строкой. */
-export function bookingNames(b: Pick<Booking, "student_1" | "student_2">): string {
-  return b.student_2 ? `${b.student_1} + ${b.student_2}` : b.student_1;
+/** ФИО ученика(ов) заявки одной строкой (пара/тройка). */
+export function bookingNames(
+  b: Pick<Booking, "student_1" | "student_2" | "student_3">,
+): string {
+  return [b.student_1, b.student_2, b.student_3].filter(Boolean).join(" + ");
 }
 
 // ── Настройки / универсальная ссылка ────────────────────────────────────────────
@@ -130,6 +132,7 @@ export async function renameStudent(id: string, name: string): Promise<void> {
   // Синхронизируем денормализованное имя в заявках.
   await db.from("bookings").update({ student_1: trimmed }).eq("student_id", id);
   await db.from("bookings").update({ student_2: trimmed }).eq("partner_student_id", id);
+  await db.from("bookings").update({ student_3: trimmed }).eq("partner2_student_id", id);
 }
 
 /** Сливает дубль: все записи source переходят на target, source удаляется. */
@@ -141,12 +144,14 @@ export async function mergeStudents(sourceId: string, targetId: string): Promise
 
   await db.from("bookings").update({ student_id: targetId }).eq("student_id", sourceId);
   await db.from("bookings").update({ partner_student_id: targetId }).eq("partner_student_id", sourceId);
+  await db.from("bookings").update({ partner2_student_id: targetId }).eq("partner2_student_id", sourceId);
   await db.from("quiz_results").update({ student_id: targetId }).eq("student_id", sourceId);
 
   // Приводим денормализованные имена к имени target.
   if (targetName) {
     await db.from("bookings").update({ student_1: targetName }).eq("student_id", targetId);
     await db.from("bookings").update({ student_2: targetName }).eq("partner_student_id", targetId);
+    await db.from("bookings").update({ student_3: targetName }).eq("partner2_student_id", targetId);
   }
 
   await db.from("students").delete().eq("id", sourceId);
@@ -220,13 +225,18 @@ export async function getStudentsOverview(): Promise<StudentOverview[]> {
       name: s.name,
       household_id: s.household_id,
       bookings: active
-        .filter((b) => b.student_id === s.id || b.partner_student_id === s.id)
+        .filter(
+          (b) =>
+            b.student_id === s.id ||
+            b.partner_student_id === s.id ||
+            b.partner2_student_id === s.id,
+        )
         .map((b) => ({
           weekday: b.slot.weekday,
           start_time: b.slot.start_time,
           end_time: b.slot.end_time,
           status: b.status,
-          asPartner: b.partner_student_id === s.id,
+          asPartner: b.partner_student_id === s.id || b.partner2_student_id === s.id,
         }))
         .sort(
           (a, b) =>
@@ -332,7 +342,9 @@ export async function getBookingsForHousehold(
   const { data } = await db
     .from("bookings")
     .select("*, slot:slots(*)")
-    .or(`student_id.in.${list},partner_student_id.in.${list}`)
+    .or(
+      `student_id.in.${list},partner_student_id.in.${list},partner2_student_id.in.${list}`,
+    )
     .order("created_at", { ascending: false });
   return (data ?? []) as BookingWithSlot[];
 }
@@ -457,10 +469,11 @@ export type CreateBookingResult =
   | { ok: true; booking: Booking }
   | { ok: false; reason: "invalid_token" | "slot_unavailable" | "taken" | "forbidden" | "duplicate" };
 
-/** Создаёт заявку от родителя с проверкой токена, слота и принадлежности ученика. */
+/**
+ * Создаёт заявку. Авторизация — по сессии ученика (household), а не по токену
+ * ссылки, поэтому смена ссылки не ломает запись уже зарегистрированным.
+ */
 export async function createBooking(input: CreateBookingInput): Promise<CreateBookingResult> {
-  if (!(await isValidToken(input.token))) return { ok: false, reason: "invalid_token" };
-
   const db = supabaseAdmin();
 
   // Ученик должен принадлежать текущему household (защита от подмены).
@@ -807,9 +820,9 @@ export async function createManualBooking(input: {
 
 export type PairResult =
   | { ok: true; booking: BookingWithSlot; partner: Student }
-  | { ok: false; reason: "not_found" | "self" };
+  | { ok: false; reason: "not_found" | "self" | "full" };
 
-/** Делает занятие парным: привязывает второго ученика к заявке. */
+/** Добавляет к занятию ещё одного ученика (пара, затем тройка). */
 export async function setBookingPartner(
   bookingId: string,
   partner: { studentId?: string; name?: string },
@@ -827,16 +840,37 @@ export async function setBookingPartner(
     student = students[0] ?? null;
   }
   if (!student) return { ok: false, reason: "not_found" };
-  if (student.id === booking.student_id) return { ok: false, reason: "self" };
 
-  const { error } = await db
-    .from("bookings")
-    .update({ partner_student_id: student.id, student_2: student.name })
-    .eq("id", bookingId);
+  // Уже участвует?
+  const already = [booking.student_id, booking.partner_student_id, booking.partner2_student_id];
+  if (already.includes(student.id)) return { ok: false, reason: "self" };
+
+  // Куда добавить: сначала во второй слот, потом в третий.
+  let patch: Record<string, string>;
+  if (!booking.partner_student_id) {
+    patch = { partner_student_id: student.id, student_2: student.name };
+  } else if (!booking.partner2_student_id) {
+    patch = { partner2_student_id: student.id, student_3: student.name };
+  } else {
+    return { ok: false, reason: "full" };
+  }
+
+  const { error } = await db.from("bookings").update(patch).eq("id", bookingId);
   if (error) throw new Error(error.message);
 
   const updated = await getBookingById(bookingId);
   return { ok: true, booking: updated as BookingWithSlot, partner: student };
+}
+
+/** Убирает последнего добавленного участника (тройка → пара → одиночное). */
+export async function unpairBooking(bookingId: string): Promise<void> {
+  const db = supabaseAdmin();
+  const booking = await getBookingById(bookingId);
+  if (!booking) return;
+  const patch = booking.partner2_student_id
+    ? { partner2_student_id: null, student_3: null }
+    : { partner_student_id: null, student_2: null };
+  await db.from("bookings").update(patch).eq("id", bookingId);
 }
 
 /** Ответ ученика на предложенное время. */

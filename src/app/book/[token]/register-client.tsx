@@ -44,6 +44,16 @@ export function RegisterClient({ token }: { token: string }) {
   return (
     <Card className="mx-auto w-full max-w-md p-6 shadow-lg shadow-primary/5">
       <div className="flex flex-col gap-4">
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm">
+          <p className="mb-1 font-semibold">Как записывать детей 👇</p>
+          <p className="text-muted-foreground">
+            • Занимаются <b>вместе</b> (пара/тройка) — впишите их как <b>одного</b> ученика:
+            «Имя + Имя Фамилия».
+            <br />
+            • Занимаются <b>раздельно</b> (каждый в своё время) — добавьте как <b>двух разных</b>{" "}
+            учеников, каждого «Имя Фамилия».
+          </p>
+        </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="child1">Имя и фамилия ученика *</Label>
           <Input

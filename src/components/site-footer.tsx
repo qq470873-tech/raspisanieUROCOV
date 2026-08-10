@@ -15,13 +15,14 @@ export function SiteFooter() {
           onClick={() => setOpen((v) => !v)}
           className="inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1.5 text-sm text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground"
         >
+          <span>Создано с помощью</span>
           <span
             className="inline-flex size-5 items-center justify-center rounded-full text-[11px] font-bold text-white"
             style={{ background: "linear-gradient(135deg, oklch(0.62 0.24 285), oklch(0.55 0.2 250))" }}
           >
             P
           </span>
-          <span className="font-medium">PARAweb</span>
+          <span className="font-semibold text-foreground">PARAweb</span>
         </button>
 
         {open && (
