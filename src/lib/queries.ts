@@ -124,17 +124,31 @@ export async function getAllStudents(): Promise<Student[]> {
 
 export async function renameStudent(id: string, name: string): Promise<void> {
   const db = supabaseAdmin();
-  const { error } = await db.from("students").update({ name: name.trim() }).eq("id", id);
+  const trimmed = name.trim();
+  const { error } = await db.from("students").update({ name: trimmed }).eq("id", id);
   if (error) throw error;
+  // Синхронизируем денормализованное имя в заявках.
+  await db.from("bookings").update({ student_1: trimmed }).eq("student_id", id);
+  await db.from("bookings").update({ student_2: trimmed }).eq("partner_student_id", id);
 }
 
 /** Сливает дубль: все записи source переходят на target, source удаляется. */
 export async function mergeStudents(sourceId: string, targetId: string): Promise<void> {
   if (sourceId === targetId) return;
   const db = supabaseAdmin();
+  const { data: target } = await db.from("students").select("name").eq("id", targetId).maybeSingle();
+  const targetName = (target as { name: string } | null)?.name ?? null;
+
   await db.from("bookings").update({ student_id: targetId }).eq("student_id", sourceId);
   await db.from("bookings").update({ partner_student_id: targetId }).eq("partner_student_id", sourceId);
   await db.from("quiz_results").update({ student_id: targetId }).eq("student_id", sourceId);
+
+  // Приводим денормализованные имена к имени target.
+  if (targetName) {
+    await db.from("bookings").update({ student_1: targetName }).eq("student_id", targetId);
+    await db.from("bookings").update({ student_2: targetName }).eq("partner_student_id", targetId);
+  }
+
   await db.from("students").delete().eq("id", sourceId);
 }
 
