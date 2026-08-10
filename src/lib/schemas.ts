@@ -89,6 +89,17 @@ export const bookingMoveSchema = z
     message: "Укажите слот или время",
   });
 
+/** Ручное добавление записи учителем: ученик (из списка/вручную) + время (слот/своё). */
+export const manualBookingSchema = z
+  .object({
+    student_id: z.string().uuid().optional(),
+    name: z.string().trim().min(2, "Укажите имя и фамилию").max(120).optional(),
+    slot_id: z.string().uuid().optional(),
+    custom_time: customTimeSchema.optional(),
+  })
+  .refine((d) => d.student_id || d.name, { message: "Укажите ученика" })
+  .refine((d) => d.slot_id || d.custom_time, { message: "Укажите время" });
+
 /** Сделать занятие парным: второй ученик из списка (student_id) или вручную (name). */
 export const bookingPairSchema = z
   .object({

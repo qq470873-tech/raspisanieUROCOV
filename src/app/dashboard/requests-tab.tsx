@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, Check, X, Trash2, CalendarClock, Unlock, Users } from "lucide-react";
+import { AlertTriangle, Check, X, Trash2, CalendarClock, Plus, Unlock, Users } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import {
   STATUS_LABELS,
@@ -65,6 +65,7 @@ export function RequestsTab({
   );
   const [pairFor, setPairFor] = useState<BookingWithSlot | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [manualOpen, setManualOpen] = useState(false);
 
   async function act(booking_id: string, action: "confirm" | "reject" | "delete" | "cancel") {
     if (action === "delete" && !confirm("Удалить заявку безвозвратно?")) return;
@@ -114,13 +115,13 @@ export function RequestsTab({
       <Card key={b.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{names(b)}</span>
+            <span className="text-lg font-bold tabular-nums tracking-tight">
+              {formatRange(b.slot.start_time, b.slot.end_time)}
+            </span>
             <Badge className={STATUS_VARIANT[b.status]}>{STATUS_LABELS[b.status]}</Badge>
           </div>
-          <div className="text-sm text-muted-foreground">
-            {weekdayLong(b.slot.weekday)}, {formatRange(b.slot.start_time, b.slot.end_time)}
-          </div>
-          {b.comment && <div className="text-sm">💬 {b.comment}</div>}
+          <div className="text-sm font-medium">{names(b)}</div>
+          {b.comment && <div className="text-sm text-muted-foreground">💬 {b.comment}</div>}
           {b.email && <div className="text-xs text-muted-foreground">{b.email}</div>}
         </div>
 
@@ -179,18 +180,25 @@ export function RequestsTab({
 
   return (
     <>
-      {students.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <button className={chip(selected.size === 0)} onClick={() => setSelected(new Set())}>
-            Все
-          </button>
-          {students.map((s) => (
-            <button key={s.id} className={chip(selected.has(s.id))} onClick={() => toggle(s.id)}>
-              {s.name}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        {students.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            <button className={chip(selected.size === 0)} onClick={() => setSelected(new Set())}>
+              Все
             </button>
-          ))}
-        </div>
-      )}
+            {students.map((s) => (
+              <button key={s.id} className={chip(selected.has(s.id))} onClick={() => toggle(s.id)}>
+                {s.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span />
+        )}
+        <Button size="sm" onClick={() => setManualOpen(true)} className="gap-1">
+          <Plus className="size-4" /> Добавить запись
+        </Button>
+      </div>
 
       {active.length === 0 ? (
         <Card className="p-10 text-center text-muted-foreground">
@@ -230,7 +238,177 @@ export function RequestsTab({
           router.refresh();
         }}
       />
+
+      <ManualDialog
+        open={manualOpen}
+        students={students}
+        freeSlots={freeSlots}
+        onClose={() => setManualOpen(false)}
+        onDone={() => {
+          setManualOpen(false);
+          router.refresh();
+        }}
+      />
     </>
+  );
+}
+
+function ManualDialog({
+  open,
+  students,
+  freeSlots,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  students: StudentOption[];
+  freeSlots: Slot[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [studentId, setStudentId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const [weekday, setWeekday] = useState("1");
+  const [start, setStart] = useState("15:00");
+  const [end, setEnd] = useState("16:00");
+  const [useCustom, setUseCustom] = useState(false);
+
+  async function submit() {
+    const studentPart = name.trim().length >= 2 ? { name: name.trim() } : studentId ? { student_id: studentId } : null;
+    if (!studentPart) {
+      toast.error("Выберите или впишите ученика");
+      return;
+    }
+    let timePart: object | null = null;
+    if (useCustom) {
+      if (end <= start) {
+        toast.error("Конец должен быть позже начала");
+        return;
+      }
+      timePart = { custom_time: { weekday: Number(weekday), start_time: start, end_time: end } };
+    } else if (slotId) {
+      timePart = { slot_id: slotId };
+    }
+    if (!timePart) {
+      toast.error("Выберите время");
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiPost("/api/bookings/manual", { ...studentPart, ...timePart });
+      toast.success("Запись добавлена");
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Добавить запись вручную</DialogTitle>
+          <DialogDescription>Для тех, кто написал или позвонил. Запись сразу подтверждается.</DialogDescription>
+        </DialogHeader>
+
+        {/* Ученик */}
+        <div className="flex flex-col gap-2">
+          <Label className="text-xs">Ученик</Label>
+          {students.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {students.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setStudentId(s.id);
+                    setName("");
+                  }}
+                  className={`rounded-full border px-3 py-1 text-sm ${
+                    studentId === s.id && !name
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border hover:bg-accent"
+                  }`}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <Input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (e.target.value) setStudentId(null);
+            }}
+            placeholder="…или впишите нового ученика"
+          />
+        </div>
+
+        {/* Время */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs">Время</Label>
+            <button
+              onClick={() => setUseCustom((v) => !v)}
+              className="text-xs text-primary hover:underline"
+            >
+              {useCustom ? "выбрать из свободных" : "задать своё время"}
+            </button>
+          </div>
+
+          {useCustom ? (
+            <div className="flex flex-wrap items-end gap-2">
+              <Select value={weekday} onValueChange={(v) => v && setWeekday(v)}>
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKDAYS.map((d) => (
+                    <SelectItem key={d.value} value={String(d.value)}>
+                      {d.long}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-28" />
+              <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-28" />
+            </div>
+          ) : freeSlots.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Свободных слотов нет — задайте своё время.</p>
+          ) : (
+            <div className="grid max-h-48 grid-cols-2 gap-2 overflow-y-auto">
+              {freeSlots.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSlotId(s.id)}
+                  className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 text-sm ${
+                    slotId === s.id
+                      ? "border-primary bg-primary/10"
+                      : "border-border hover:bg-accent"
+                  }`}
+                >
+                  <span className="text-xs text-muted-foreground">{weekdayLong(s.weekday)}</span>
+                  <span className="tabular-nums">{formatRange(s.start_time, s.end_time)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Отмена
+          </Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? "Добавление…" : "Добавить"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

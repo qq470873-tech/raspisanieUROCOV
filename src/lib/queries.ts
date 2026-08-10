@@ -618,6 +618,114 @@ export async function moveBooking(input: MoveBookingInput): Promise<MoveResult> 
   return { ok: true };
 }
 
+export type ManualResult =
+  | { ok: true; booking: BookingWithSlot; rejected: BookingWithSlot[] }
+  | { ok: false; reason: "student" | "slot" | "taken" };
+
+/**
+ * Учитель вручную добавляет подтверждённую запись (для тех, кто написал/позвонил).
+ * Ученик — из списка (studentId) или новый (name). Время — существующий слот или своё.
+ */
+export async function createManualBooking(input: {
+  studentId?: string;
+  name?: string;
+  slotId?: string;
+  customTime?: { weekday: number; start_time: string; end_time: string };
+}): Promise<ManualResult> {
+  const db = supabaseAdmin();
+
+  // Ученик.
+  let student: Student | null = null;
+  if (input.studentId) {
+    const { data } = await db.from("students").select("*").eq("id", input.studentId).maybeSingle();
+    student = (data as Student) ?? null;
+  } else if (input.name && input.name.trim()) {
+    const { students } = await registerStudents([input.name.trim()]);
+    student = students[0] ?? null;
+  }
+  if (!student) return { ok: false, reason: "student" };
+
+  // Время (слот или своё).
+  let slotId = input.slotId;
+  let weekday: number;
+  let start: string;
+  let end: string;
+  if (input.customTime) {
+    weekday = input.customTime.weekday;
+    start = input.customTime.start_time;
+    end = input.customTime.end_time;
+  } else if (input.slotId) {
+    const { data } = await db.from("slots").select("*").eq("id", input.slotId).maybeSingle();
+    const slot = data as Slot | null;
+    if (!slot || !slot.is_active) return { ok: false, reason: "slot" };
+    weekday = slot.weekday;
+    start = slot.start_time;
+    end = slot.end_time;
+  } else {
+    return { ok: false, reason: "slot" };
+  }
+
+  // Пересечение с подтверждённой записью — нельзя.
+  const active = await activeBookingsWithSlot();
+  if (
+    active.some(
+      (b) =>
+        b.status === "confirmed" &&
+        b.slot.weekday === weekday &&
+        rangesOverlap(start, end, b.slot.start_time, b.slot.end_time),
+    )
+  ) {
+    return { ok: false, reason: "taken" };
+  }
+
+  if (input.customTime) {
+    const { data: newSlot, error } = await db
+      .from("slots")
+      .insert({ weekday, start_time: start, end_time: end, is_active: true })
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    slotId = (newSlot as Slot).id;
+  }
+
+  const { data: created, error: insErr } = await db
+    .from("bookings")
+    .insert({
+      slot_id: slotId,
+      student_id: student.id,
+      student_1: student.name,
+      email: student.email || null,
+      status: "confirmed",
+      access_token: randomToken(),
+    })
+    .select("*")
+    .single();
+  if (insErr) {
+    if (insErr.code === "23505") return { ok: false, reason: "taken" };
+    throw new Error(insErr.message);
+  }
+
+  // Авто-отказ пересекающимся ожидающим/предложенным.
+  const clashing = active.filter(
+    (b) =>
+      (b.status === "pending" || b.status === "proposed") &&
+      b.slot.weekday === weekday &&
+      rangesOverlap(start, end, b.slot.start_time, b.slot.end_time),
+  );
+  if (clashing.length > 0) {
+    await db
+      .from("bookings")
+      .update({ status: "rejected", student_seen: false })
+      .in(
+        "id",
+        clashing.map((b) => b.id),
+      );
+  }
+
+  const booking = (await getBookingById((created as Booking).id)) as BookingWithSlot;
+  return { ok: true, booking, rejected: clashing };
+}
+
 export type PairResult =
   | { ok: true; booking: BookingWithSlot; partner: Student }
   | { ok: false; reason: "not_found" | "self" };
