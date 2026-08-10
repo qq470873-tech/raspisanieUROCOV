@@ -9,6 +9,7 @@ import {
 import { getHouseholdId } from "@/lib/student-session";
 import { RegisterClient } from "./register-client";
 import { StudentApp } from "./student-app";
+import { EnglishFacts } from "./english-facts";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,8 @@ export default async function BookPage({
       ) : (
         <RegisterClient token={token} />
       )}
+
+      <EnglishFacts />
     </main>
   );
 }
