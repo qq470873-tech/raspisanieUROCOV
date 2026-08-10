@@ -2,13 +2,15 @@
 
 import { useMemo } from "react";
 import type { SlotWithBooking } from "@/lib/domain";
-import type { BookingWithSlot } from "@/lib/queries";
+import type { BookingEvent, BookingWithSlot, StudentOverview } from "@/lib/queries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { DashboardHeader } from "./dashboard-header";
 import { ScheduleTab } from "./schedule-tab";
 import { RequestsTab } from "./requests-tab";
+import { StudentsTab } from "./students-tab";
+import { HistoryTab } from "./history-tab";
 
 export type StudentOption = { id: string; name: string };
 
@@ -17,15 +19,20 @@ interface Props {
   bookings: BookingWithSlot[];
   bookingUrl: string;
   unseen: number;
-  students: StudentOption[];
+  overview: StudentOverview[];
+  history: BookingEvent[];
 }
 
-export function DashboardShell({ slots, bookings, bookingUrl, unseen, students }: Props) {
+export function DashboardShell({ slots, bookings, bookingUrl, unseen, overview, history }: Props) {
   const freeSlots = useMemo(
     () => slots.filter((s) => s.is_active && !s.booking),
     [slots],
   );
   const pendingCount = bookings.filter((b) => b.status === "pending").length;
+  const studentOptions: StudentOption[] = useMemo(
+    () => overview.map((s) => ({ id: s.id, name: s.name })),
+    [overview],
+  );
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:py-8">
@@ -43,6 +50,8 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen, students }
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="students">Ученики</TabsTrigger>
+          <TabsTrigger value="history">История</TabsTrigger>
         </TabsList>
 
         <TabsContent value="schedule" className="mt-4">
@@ -50,7 +59,15 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen, students }
         </TabsContent>
 
         <TabsContent value="requests" className="mt-4">
-          <RequestsTab bookings={bookings} freeSlots={freeSlots} students={students} />
+          <RequestsTab bookings={bookings} freeSlots={freeSlots} students={studentOptions} />
+        </TabsContent>
+
+        <TabsContent value="students" className="mt-4">
+          <StudentsTab overview={overview} />
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-4">
+          <HistoryTab history={history} />
         </TabsContent>
       </Tabs>
     </div>

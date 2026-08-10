@@ -1,6 +1,6 @@
 import { badRequest, guardTeacher, json } from "@/lib/api";
 import { bookingPairSchema } from "@/lib/schemas";
-import { setBookingPartner } from "@/lib/queries";
+import { logEventFor, setBookingPartner } from "@/lib/queries";
 import { notifyPairedPartner } from "@/lib/email";
 
 /** Учитель делает занятие парным: добавляет второго ученика. */
@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     result.booking.student_1,
     result.booking.slot,
   );
+  await logEventFor(result.booking, "paired", "teacher");
 
   return json({ ok: true });
 }

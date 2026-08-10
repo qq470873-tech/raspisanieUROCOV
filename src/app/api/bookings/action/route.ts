@@ -5,6 +5,7 @@ import {
   confirmBooking,
   deleteBooking,
   getBookingById,
+  logEventFor,
   rejectBooking,
 } from "@/lib/queries";
 import { notifyStudentDecision } from "@/lib/email";
@@ -26,18 +27,25 @@ export async function POST(request: Request) {
     case "confirm": {
       const { rejected } = await confirmBooking(booking_id);
       await notifyStudentDecision(booking, booking.slot, "confirmed");
-      // Пересекающимся заявкам — авто-отказ (уведомляем каждого).
-      for (const r of rejected) await notifyStudentDecision(r, r.slot, "rejected");
+      await logEventFor(booking, "confirmed", "teacher");
+      // Пересекающимся заявкам — авто-отказ (уведомляем и логируем каждого).
+      for (const r of rejected) {
+        await notifyStudentDecision(r, r.slot, "rejected");
+        await logEventFor(r, "auto_rejected", "teacher");
+      }
       break;
     }
     case "reject":
       await rejectBooking(booking_id);
       await notifyStudentDecision(booking, booking.slot, "rejected");
+      await logEventFor(booking, "rejected", "teacher");
       break;
     case "cancel":
       await cancelBooking(booking_id);
+      await logEventFor(booking, "cancelled", "teacher");
       break;
     case "delete":
+      await logEventFor(booking, "deleted", "teacher");
       await deleteBooking(booking_id);
       break;
   }

@@ -10,6 +10,7 @@ import {
   WEEKDAYS,
   formatRange,
   formatTime,
+  timeToMinutes,
   weekdayLong,
   type BookingStatus,
   type Slot,
@@ -63,6 +64,7 @@ export function RequestsTab({
     null,
   );
   const [pairFor, setPairFor] = useState<BookingWithSlot | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   async function act(booking_id: string, action: "confirm" | "reject" | "delete" | "cancel") {
     if (action === "delete" && !confirm("Удалить заявку безвозвратно?")) return;
@@ -75,88 +77,139 @@ export function RequestsTab({
     }
   }
 
-  if (bookings.length === 0) {
+  const active = bookings.filter((b) =>
+    ["pending", "confirmed", "proposed"].includes(b.status),
+  );
+  const shown = active.filter(
+    (b) =>
+      selected.size === 0 ||
+      (b.student_id != null && selected.has(b.student_id)) ||
+      (b.partner_student_id != null && selected.has(b.partner_student_id)),
+  );
+  const byDay = WEEKDAYS.map((d) => ({
+    ...d,
+    items: shown
+      .filter((b) => b.slot.weekday === d.value)
+      .sort((a, b) => timeToMinutes(a.slot.start_time) - timeToMinutes(b.slot.start_time)),
+  })).filter((d) => d.items.length > 0);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const chip = (on: boolean) =>
+    `rounded-full border px-3 py-1 text-sm transition-colors ${
+      on
+        ? "border-primary bg-primary text-primary-foreground"
+        : "border-border bg-card hover:bg-accent hover:text-accent-foreground"
+    }`;
+
+  function renderBooking(b: BookingWithSlot) {
     return (
-      <Card className="p-10 text-center text-muted-foreground">
-        Заявок пока нет. Поделитесь ссылкой с родителями.
+      <Card key={b.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{names(b)}</span>
+            <Badge className={STATUS_VARIANT[b.status]}>{STATUS_LABELS[b.status]}</Badge>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            {weekdayLong(b.slot.weekday)}, {formatRange(b.slot.start_time, b.slot.end_time)}
+          </div>
+          {b.comment && <div className="text-sm">💬 {b.comment}</div>}
+          {b.email && <div className="text-xs text-muted-foreground">{b.email}</div>}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {b.status === "pending" && (
+            <>
+              <Button size="sm" onClick={() => act(b.id, "confirm")} className="gap-1">
+                <Check className="size-4" /> Подтвердить
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => act(b.id, "reject")} className="gap-1">
+                <X className="size-4" /> Отклонить
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setMoveFor({ booking: b, mode: "propose" })}
+                className="gap-1"
+              >
+                <CalendarClock className="size-4" /> Предложить время
+              </Button>
+            </>
+          )}
+          {b.status === "confirmed" && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setMoveFor({ booking: b, mode: "move" })}
+                className="gap-1"
+              >
+                <CalendarClock className="size-4" /> Перенести
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => act(b.id, "cancel")} className="gap-1">
+                <Unlock className="size-4" /> Освободить
+              </Button>
+            </>
+          )}
+          {(b.status === "pending" || b.status === "confirmed") && !b.partner_student_id && (
+            <Button size="sm" variant="outline" onClick={() => setPairFor(b)} className="gap-1">
+              <Users className="size-4" /> Сделать парным
+            </Button>
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => act(b.id, "delete")}
+            title="Удалить"
+            className="text-muted-foreground"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
       </Card>
     );
   }
 
   return (
     <>
-      <div className="flex flex-col gap-3">
-        {bookings.map((b) => (
-          <Card key={b.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col gap-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{names(b)}</span>
-                <Badge className={STATUS_VARIANT[b.status]}>{STATUS_LABELS[b.status]}</Badge>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                {weekdayLong(b.slot.weekday)}, {formatRange(b.slot.start_time, b.slot.end_time)}
-              </div>
-              {b.comment && <div className="text-sm">💬 {b.comment}</div>}
-              {b.email && <div className="text-xs text-muted-foreground">{b.email}</div>}
-            </div>
+      {students.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button className={chip(selected.size === 0)} onClick={() => setSelected(new Set())}>
+            Все
+          </button>
+          {students.map((s) => (
+            <button key={s.id} className={chip(selected.has(s.id))} onClick={() => toggle(s.id)}>
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
 
-            <div className="flex flex-wrap items-center gap-2">
-              {b.status === "pending" && (
-                <>
-                  <Button size="sm" onClick={() => act(b.id, "confirm")} className="gap-1">
-                    <Check className="size-4" /> Подтвердить
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => act(b.id, "reject")} className="gap-1">
-                    <X className="size-4" /> Отклонить
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setMoveFor({ booking: b, mode: "propose" })}
-                    className="gap-1"
-                  >
-                    <CalendarClock className="size-4" /> Предложить время
-                  </Button>
-                </>
-              )}
-              {b.status === "confirmed" && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setMoveFor({ booking: b, mode: "move" })}
-                    className="gap-1"
-                  >
-                    <CalendarClock className="size-4" /> Перенести
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => act(b.id, "cancel")} className="gap-1">
-                    <Unlock className="size-4" /> Освободить
-                  </Button>
-                </>
-              )}
-              {(b.status === "pending" || b.status === "confirmed") && !b.partner_student_id && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setPairFor(b)}
-                  className="gap-1"
-                >
-                  <Users className="size-4" /> Сделать парным
-                </Button>
-              )}
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => act(b.id, "delete")}
-                title="Удалить"
-                className="text-muted-foreground"
-              >
-                <Trash2 className="size-4" />
-              </Button>
+      {active.length === 0 ? (
+        <Card className="p-10 text-center text-muted-foreground">
+          Активных заявок нет. Поделитесь ссылкой с родителями.
+        </Card>
+      ) : byDay.length === 0 ? (
+        <Card className="p-10 text-center text-muted-foreground">
+          Нет заявок по выбранным ученикам.
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-6">
+          {byDay.map((day) => (
+            <div key={day.value}>
+              <h3 className="mb-2 text-sm font-semibold text-muted-foreground">{day.long}</h3>
+              <div className="flex flex-col gap-3">{day.items.map(renderBooking)}</div>
             </div>
-          </Card>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <MoveDialog
         state={moveFor}

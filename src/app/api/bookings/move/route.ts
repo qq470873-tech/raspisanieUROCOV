@@ -1,6 +1,6 @@
 import { badRequest, guardTeacher, json } from "@/lib/api";
 import { bookingMoveSchema } from "@/lib/schemas";
-import { getBookingById, moveBooking } from "@/lib/queries";
+import { getBookingById, logEventFor, moveBooking } from "@/lib/queries";
 import { notifyStudentDecision, notifyStudentProposal } from "@/lib/email";
 
 /** Перенос заявки в другой слот или предложение времени ученику. */
@@ -29,8 +29,13 @@ export async function POST(request: Request) {
 
   const updated = await getBookingById(booking_id);
   if (updated) {
-    if (mode === "propose") await notifyStudentProposal(updated, updated.slot);
-    else await notifyStudentDecision(updated, updated.slot, "confirmed");
+    if (mode === "propose") {
+      await notifyStudentProposal(updated, updated.slot);
+      await logEventFor(updated, "proposed", "teacher");
+    } else {
+      await notifyStudentDecision(updated, updated.slot, "confirmed");
+      await logEventFor(updated, "moved", "teacher");
+    }
   }
 
   return json({ ok: true });

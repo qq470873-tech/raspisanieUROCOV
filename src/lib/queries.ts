@@ -4,6 +4,7 @@ import { supabaseAdmin } from "./supabase";
 import {
   ACTIVE_STATUSES,
   type Booking,
+  type BookingStatus,
   type Slot,
   type SlotWithBooking,
   rangesOverlap,
@@ -119,6 +120,125 @@ export async function getAllStudents(): Promise<Student[]> {
   const db = supabaseAdmin();
   const { data } = await db.from("students").select("*").order("name");
   return (data ?? []) as Student[];
+}
+
+export interface StudentOverview {
+  id: string;
+  name: string;
+  household_id: string;
+  bookings: {
+    weekday: number;
+    start_time: string;
+    end_time: string;
+    status: BookingStatus;
+    asPartner: boolean;
+  }[];
+}
+
+/** Все ученики + их активные записи — для вкладки «Ученики». */
+export async function getStudentsOverview(): Promise<StudentOverview[]> {
+  const [students, active] = await Promise.all([getAllStudents(), activeBookingsWithSlot()]);
+  return students.map((s) => ({
+    id: s.id,
+    name: s.name,
+    household_id: s.household_id,
+    bookings: active
+      .filter((b) => b.student_id === s.id || b.partner_student_id === s.id)
+      .map((b) => ({
+        weekday: b.slot.weekday,
+        start_time: b.slot.start_time,
+        end_time: b.slot.end_time,
+        status: b.status,
+        asPartner: b.partner_student_id === s.id,
+      }))
+      .sort(
+        (a, b) =>
+          a.weekday - b.weekday || timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
+      ),
+  }));
+}
+
+// ── История (журнал событий) ──────────────────────────────────────────────────
+
+export type EventAction =
+  | "requested"
+  | "confirmed"
+  | "rejected"
+  | "auto_rejected"
+  | "cancelled"
+  | "moved"
+  | "proposed"
+  | "paired"
+  | "accepted"
+  | "declined"
+  | "deleted";
+
+export interface BookingEvent {
+  id: string;
+  created_at: string;
+  student_name: string;
+  partner_name: string | null;
+  weekday: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  action: string;
+  by_role: string;
+}
+
+/** Записывает событие в журнал (best-effort — не ломает основную операцию). */
+export async function logBookingEvent(e: {
+  bookingId?: string;
+  studentName: string;
+  partnerName?: string | null;
+  weekday?: number | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  action: EventAction;
+  byRole?: "student" | "teacher";
+}): Promise<void> {
+  try {
+    const db = supabaseAdmin();
+    await db.from("booking_events").insert({
+      booking_id: e.bookingId ?? null,
+      student_name: e.studentName,
+      partner_name: e.partnerName ?? null,
+      weekday: e.weekday ?? null,
+      start_time: e.startTime ?? null,
+      end_time: e.endTime ?? null,
+      action: e.action,
+      by_role: e.byRole ?? "teacher",
+    });
+  } catch (err) {
+    console.error("logBookingEvent:", err);
+  }
+}
+
+/** Логирует событие из заявки со слотом. */
+export async function logEventFor(
+  b: BookingWithSlot,
+  action: EventAction,
+  byRole: "student" | "teacher",
+): Promise<void> {
+  await logBookingEvent({
+    bookingId: b.id,
+    studentName: b.student_1,
+    partnerName: b.student_2,
+    weekday: b.slot?.weekday ?? null,
+    startTime: b.slot?.start_time ?? null,
+    endTime: b.slot?.end_time ?? null,
+    action,
+    byRole,
+  });
+}
+
+export async function getHistory(limit = 200): Promise<BookingEvent[]> {
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("booking_events")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return (data ?? []) as BookingEvent[];
 }
 
 /** Заявки всех детей household (как основной ученик ИЛИ как партнёр по паре). */

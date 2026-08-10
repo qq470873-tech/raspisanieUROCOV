@@ -1,6 +1,6 @@
 import { badRequest, json } from "@/lib/api";
 import { bookingInputSchema } from "@/lib/schemas";
-import { createBooking, getBookingById } from "@/lib/queries";
+import { createBooking, getBookingById, logEventFor } from "@/lib/queries";
 import { getHouseholdId } from "@/lib/student-session";
 import { notifyTeacherNewBooking } from "@/lib/email";
 
@@ -35,7 +35,10 @@ export async function POST(request: Request) {
 
   // Уведомление преподавателю (email опционально — тихо пропустится, если не настроено).
   const withSlot = await getBookingById(result.booking.id);
-  if (withSlot) await notifyTeacherNewBooking(withSlot, withSlot.slot);
+  if (withSlot) {
+    await notifyTeacherNewBooking(withSlot, withSlot.slot);
+    await logEventFor(withSlot, "requested", "student");
+  }
 
   return json({ ok: true, access_token: result.booking.access_token });
 }
