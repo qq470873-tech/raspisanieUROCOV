@@ -130,8 +130,6 @@ function Character({ pose }: { pose: number }) {
         <rect x="65" y="104" width="9" height="20" rx="4" fill={b} />
         {/* тело */}
         <rect x="38" y="60" width="44" height="52" rx="20" fill={b} />
-        {/* руки */}
-        {arms[pose] ?? arms[0]}
         {/* голова */}
         <circle cx="60" cy="40" r="24" fill={b} />
         {/* глаза */}
@@ -150,6 +148,8 @@ function Character({ pose }: { pose: number }) {
         {/* румянец */}
         <circle cx="46" cy="46" r="3" fill="oklch(0.8 0.12 20 / 0.5)" />
         <circle cx="74" cy="46" r="3" fill="oklch(0.8 0.12 20 / 0.5)" />
+        {/* руки — поверх тела и головы, чтобы всегда были видны обе */}
+        {arms[pose] ?? arms[0]}
       </g>
     </svg>
   );

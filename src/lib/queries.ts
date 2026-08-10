@@ -122,6 +122,57 @@ export async function getAllStudents(): Promise<Student[]> {
   return (data ?? []) as Student[];
 }
 
+export async function renameStudent(id: string, name: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db.from("students").update({ name: name.trim() }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Сливает дубль: все записи source переходят на target, source удаляется. */
+export async function mergeStudents(sourceId: string, targetId: string): Promise<void> {
+  if (sourceId === targetId) return;
+  const db = supabaseAdmin();
+  await db.from("bookings").update({ student_id: targetId }).eq("student_id", sourceId);
+  await db.from("bookings").update({ partner_student_id: targetId }).eq("partner_student_id", sourceId);
+  await db.from("quiz_results").update({ student_id: targetId }).eq("student_id", sourceId);
+  await db.from("students").delete().eq("id", sourceId);
+}
+
+export interface QuizResult {
+  id: string;
+  student_id: string;
+  level: string;
+  score: number;
+  total: number;
+  created_at: string;
+}
+
+/** Сохраняет результат тренажёра (с проверкой принадлежности ученика). */
+export async function saveQuizResult(input: {
+  studentId: string;
+  householdId: string;
+  level: string;
+  score: number;
+  total: number;
+}): Promise<{ ok: boolean }> {
+  const db = supabaseAdmin();
+  const { data: st } = await db
+    .from("students")
+    .select("household_id")
+    .eq("id", input.studentId)
+    .maybeSingle();
+  if (!st || (st as { household_id: string }).household_id !== input.householdId) {
+    return { ok: false };
+  }
+  await db.from("quiz_results").insert({
+    student_id: input.studentId,
+    level: input.level,
+    score: input.score,
+    total: input.total,
+  });
+  return { ok: true };
+}
+
 export interface StudentOverview {
   id: string;
   name: string;
@@ -133,29 +184,43 @@ export interface StudentOverview {
     status: BookingStatus;
     asPartner: boolean;
   }[];
+  lastQuiz: { level: string; score: number; total: number; created_at: string } | null;
 }
 
-/** Все ученики + их активные записи — для вкладки «Ученики». */
+/** Все ученики + их активные записи и последний результат игры — для вкладки «Ученики». */
 export async function getStudentsOverview(): Promise<StudentOverview[]> {
-  const [students, active] = await Promise.all([getAllStudents(), activeBookingsWithSlot()]);
-  return students.map((s) => ({
-    id: s.id,
-    name: s.name,
-    household_id: s.household_id,
-    bookings: active
-      .filter((b) => b.student_id === s.id || b.partner_student_id === s.id)
-      .map((b) => ({
-        weekday: b.slot.weekday,
-        start_time: b.slot.start_time,
-        end_time: b.slot.end_time,
-        status: b.status,
-        asPartner: b.partner_student_id === s.id,
-      }))
-      .sort(
-        (a, b) =>
-          a.weekday - b.weekday || timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
-      ),
-  }));
+  const db = supabaseAdmin();
+  const [students, active, quizzes] = await Promise.all([
+    getAllStudents(),
+    activeBookingsWithSlot(),
+    db
+      .from("quiz_results")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .then((r) => (r.data ?? []) as QuizResult[]),
+  ]);
+  return students.map((s) => {
+    const q = quizzes.find((x) => x.student_id === s.id) ?? null;
+    return {
+      id: s.id,
+      name: s.name,
+      household_id: s.household_id,
+      bookings: active
+        .filter((b) => b.student_id === s.id || b.partner_student_id === s.id)
+        .map((b) => ({
+          weekday: b.slot.weekday,
+          start_time: b.slot.start_time,
+          end_time: b.slot.end_time,
+          status: b.status,
+          asPartner: b.partner_student_id === s.id,
+        }))
+        .sort(
+          (a, b) =>
+            a.weekday - b.weekday || timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
+        ),
+      lastQuiz: q ? { level: q.level, score: q.score, total: q.total, created_at: q.created_at } : null,
+    };
+  });
 }
 
 // ── История (журнал событий) ──────────────────────────────────────────────────

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Copy, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, ChevronUp, Copy, Plus, Printer, Trash2 } from "lucide-react";
 import { apiPost, apiSend } from "@/lib/client";
 import {
   WEEKDAYS,
@@ -138,6 +139,15 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex justify-end">
+        <Link
+          href="/dashboard/print"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <Printer className="size-4" /> Печать недели
+        </Link>
+      </div>
+
       {/* Добавление слота */}
       <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
         <div className="flex flex-col gap-1.5">

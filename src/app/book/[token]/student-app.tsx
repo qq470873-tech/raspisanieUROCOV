@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EnglishQuiz } from "./english-quiz";
 import {
   Dialog,
   DialogContent,
@@ -147,6 +148,7 @@ export function StudentApp({
               </Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="quiz">🎮 Тренажёр</TabsTrigger>
         </TabsList>
 
         {/* Расписание */}
@@ -222,6 +224,10 @@ export function StudentApp({
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="quiz" className="mt-5">
+          <EnglishQuiz students={students} />
         </TabsContent>
       </Tabs>
 

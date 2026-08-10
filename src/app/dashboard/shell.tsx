@@ -40,7 +40,7 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen, overview, 
       <DashboardHeader bookingUrl={bookingUrl} unseen={unseen} />
 
       <Tabs defaultValue="schedule" className="mt-6">
-        <TabsList className="max-w-full overflow-x-auto">
+        <TabsList>
           <TabsTrigger value="schedule">Расписание</TabsTrigger>
           <TabsTrigger value="requests" className="gap-2">
             Заявки

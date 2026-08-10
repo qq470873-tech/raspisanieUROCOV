@@ -141,6 +141,15 @@
   }
 }
 
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+  }
+}
+
 @layer components {
   /* Мягкий градиентный «бренд-бейдж» с иконкой */
   .brand-badge {

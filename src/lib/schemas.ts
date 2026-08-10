@@ -109,6 +109,26 @@ export const bookingPairSchema = z
   })
   .refine((d) => d.student_id || d.name, { message: "Выберите или впишите ученика" });
 
+/** Переименование ученика. */
+export const studentRenameSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(2, "Укажите имя и фамилию").max(120),
+});
+
+/** Объединение дублей: source → target. */
+export const studentMergeSchema = z.object({
+  source_id: z.string().uuid(),
+  target_id: z.string().uuid(),
+});
+
+/** Результат тренажёра английского. */
+export const quizResultSchema = z.object({
+  student_id: z.string().uuid(),
+  level: z.string().trim().min(1).max(40),
+  score: z.number().int().min(0).max(100),
+  total: z.number().int().min(1).max(100),
+});
+
 /** Ответ ученика на предложение. */
 export const proposalResponseSchema = z.object({
   access_token: z.string().min(1),
