@@ -6,12 +6,12 @@ import { ProposalActions } from "./proposal-actions";
 
 export const dynamic = "force-dynamic";
 
-const BANNER: Record<string, { title: string; className: string }> = {
-  pending: { title: "⏳ Заявка ожидает подтверждения", className: "text-amber-600" },
-  confirmed: { title: "✅ Запись подтверждена", className: "text-emerald-600" },
-  rejected: { title: "❌ Заявка отклонена", className: "text-red-600" },
-  proposed: { title: "📩 Вам предложили другое время", className: "text-sky-600" },
-  cancelled: { title: "Запись отменена", className: "text-muted-foreground" },
+const BANNER: Record<string, { title: string; className: string; bar: string }> = {
+  pending: { title: "⏳ Заявка ожидает подтверждения", className: "text-amber-600", bar: "bg-amber-400" },
+  confirmed: { title: "✅ Запись подтверждена", className: "text-emerald-600", bar: "bg-emerald-400" },
+  rejected: { title: "❌ Заявка отклонена", className: "text-red-600", bar: "bg-red-400" },
+  proposed: { title: "📩 Вам предложили другое время", className: "text-sky-600", bar: "bg-sky-400" },
+  cancelled: { title: "Запись отменена", className: "text-muted-foreground", bar: "bg-muted-foreground/40" },
 };
 
 export default async function BookingStatusPage({
@@ -30,7 +30,9 @@ export default async function BookingStatusPage({
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 items-center px-4 py-8">
-      <Card className="w-full p-6">
+      <Card className="w-full p-0 shadow-xl shadow-primary/5">
+        <div className={`h-1.5 w-full ${banner.bar}`} />
+        <div className="p-6 pt-5">
         <h1 className={`text-lg font-semibold ${banner.className}`}>{banner.title}</h1>
 
         <dl className="mt-4 flex flex-col gap-2 text-sm">
@@ -64,6 +66,7 @@ export default async function BookingStatusPage({
         <p className="mt-6 text-xs text-muted-foreground">
           Сохраните эту страницу в закладки, чтобы отслеживать статус записи.
         </p>
+        </div>
       </Card>
     </main>
   );

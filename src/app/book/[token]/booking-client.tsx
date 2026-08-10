@@ -68,28 +68,34 @@ export function BookingClient({ token, slots }: { token: string; slots: Slot[] }
 
   if (slots.length === 0) {
     return (
-      <Card className="p-10 text-center text-muted-foreground">
-        Сейчас нет свободного времени. Загляните позже.
+      <Card className="flex flex-col items-center gap-2 p-12 text-center">
+        <span className="text-4xl">🗓️</span>
+        <p className="font-medium">Сейчас нет свободного времени</p>
+        <p className="text-sm text-muted-foreground">Загляните чуть позже — расписание обновляется.</p>
       </Card>
     );
   }
 
   return (
     <>
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-6">
         {byDay.map((day) => (
           <div key={day.value}>
-            <h2 className="mb-2 text-sm font-medium text-muted-foreground">{day.long}</h2>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+              <span className="inline-flex size-7 items-center justify-center rounded-full bg-accent text-xs font-bold text-accent-foreground">
+                {day.short}
+              </span>
+              {day.long}
+            </h2>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
               {day.slots.map((slot) => (
-                <Button
+                <button
                   key={slot.id}
-                  variant="outline"
                   onClick={() => open(slot)}
-                  className="tabular-nums"
+                  className="group flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-3.5 text-base font-semibold tabular-nums shadow-sm ring-1 ring-transparent transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-accent hover:text-accent-foreground hover:shadow-md active:translate-y-0"
                 >
                   {formatRange(slot.start_time, slot.end_time)}
-                </Button>
+                </button>
               ))}
             </div>
           </div>

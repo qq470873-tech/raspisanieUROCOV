@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { GraduationCap } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,10 +30,13 @@ export function LoginForm() {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
+    <Card className="w-full max-w-sm p-2 shadow-xl shadow-primary/5">
+      <CardHeader className="items-center text-center">
+        <span className="brand-badge mb-3 size-14">
+          <GraduationCap className="size-7" />
+        </span>
         <CardTitle className="text-xl">Вход для преподавателя</CardTitle>
-        <CardDescription>Введите логин и пароль</CardDescription>
+        <CardDescription>Панель управления расписанием</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -56,7 +60,7 @@ export function LoginForm() {
               autoComplete="current-password"
             />
           </div>
-          <Button type="submit" disabled={loading} className="mt-2">
+          <Button type="submit" size="lg" disabled={loading} className="mt-2 h-11 text-base">
             {loading ? "Вход…" : "Войти"}
           </Button>
         </form>

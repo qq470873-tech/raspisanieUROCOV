@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Check, Copy, LogOut, RefreshCw } from "lucide-react";
+import { Check, Copy, GraduationCap, LogOut, RefreshCw, Share2 } from "lucide-react";
 import { apiPost, apiSend } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,9 +47,14 @@ export function DashboardHeader({ bookingUrl, unseen }: { bookingUrl: string; un
   return (
     <header className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Расписание уроков</h1>
-          <p className="text-sm text-muted-foreground">Панель преподавателя</p>
+        <div className="flex items-center gap-3">
+          <span className="brand-badge size-11">
+            <GraduationCap className="size-6" />
+          </span>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Расписание уроков</h1>
+            <p className="text-sm text-muted-foreground">Панель преподавателя</p>
+          </div>
         </div>
         <Button variant="ghost" size="sm" onClick={logout} className="gap-2">
           <LogOut className="size-4" />
@@ -57,9 +62,12 @@ export function DashboardHeader({ bookingUrl, unseen }: { bookingUrl: string; un
         </Button>
       </div>
 
-      <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+      <Card className="flex flex-col gap-3 border-primary/20 bg-primary/5 p-4 ring-primary/15 sm:flex-row sm:items-center">
         <div className="flex-1">
-          <p className="mb-1 text-sm font-medium">Ссылка для родителей</p>
+          <p className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+            <Share2 className="size-4 text-primary" />
+            Ссылка для родителей
+          </p>
           <p className="text-xs text-muted-foreground">
             Отправьте её в родительский чат — по ней записываются на свободное время.
           </p>
