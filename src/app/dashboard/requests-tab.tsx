@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, Check, X, Trash2, CalendarClock, Unlock } from "lucide-react";
+import { AlertTriangle, Check, X, Trash2, CalendarClock, Unlock, Users } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import {
   STATUS_LABELS,
@@ -47,17 +47,22 @@ function names(b: BookingWithSlot) {
   return b.student_2 ? `${b.student_1} + ${b.student_2}` : b.student_1;
 }
 
+type StudentOption = { id: string; name: string };
+
 export function RequestsTab({
   bookings,
   freeSlots,
+  students,
 }: {
   bookings: BookingWithSlot[];
   freeSlots: Slot[];
+  students: StudentOption[];
 }) {
   const router = useRouter();
   const [moveFor, setMoveFor] = useState<{ booking: BookingWithSlot; mode: "move" | "propose" } | null>(
     null,
   );
+  const [pairFor, setPairFor] = useState<BookingWithSlot | null>(null);
 
   async function act(booking_id: string, action: "confirm" | "reject" | "delete" | "cancel") {
     if (action === "delete" && !confirm("Удалить заявку безвозвратно?")) return;
@@ -129,6 +134,16 @@ export function RequestsTab({
                   </Button>
                 </>
               )}
+              {(b.status === "pending" || b.status === "confirmed") && !b.partner_student_id && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPairFor(b)}
+                  className="gap-1"
+                >
+                  <Users className="size-4" /> Сделать парным
+                </Button>
+              )}
               <Button
                 size="icon"
                 variant="ghost"
@@ -152,7 +167,103 @@ export function RequestsTab({
           router.refresh();
         }}
       />
+
+      <PairDialog
+        booking={pairFor}
+        students={students}
+        onClose={() => setPairFor(null)}
+        onDone={() => {
+          setPairFor(null);
+          router.refresh();
+        }}
+      />
     </>
+  );
+}
+
+function PairDialog({
+  booking,
+  students,
+  onClose,
+  onDone,
+}: {
+  booking: BookingWithSlot | null;
+  students: StudentOption[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [manual, setManual] = useState("");
+  const open = booking !== null;
+
+  // Себя (основного ученика) из списка исключаем.
+  const options = students.filter((s) => s.id !== booking?.student_id);
+
+  async function pair(payload: { student_id?: string; name?: string }) {
+    if (!booking) return;
+    setBusy(true);
+    try {
+      await apiPost("/api/bookings/pair", { booking_id: booking.id, ...payload });
+      toast.success("Занятие стало парным");
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Второй ученик (парное занятие)</DialogTitle>
+          <DialogDescription>
+            {booking &&
+              `${booking.student_1} · ${weekdayLong(booking.slot.weekday)}, ${formatRange(
+                booking.slot.start_time,
+                booking.slot.end_time,
+              )}. Второй ученик получит уведомление.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {options.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <Label className="text-xs">Выбрать из учеников</Label>
+            <div className="grid max-h-56 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
+              {options.map((s) => (
+                <Button
+                  key={s.id}
+                  variant="outline"
+                  disabled={busy}
+                  className="justify-start"
+                  onClick={() => pair({ student_id: s.id })}
+                >
+                  {s.name}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="manual" className="text-xs">
+            Или вписать нового
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              id="manual"
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder="Имя и фамилия"
+            />
+            <Button disabled={busy || manual.trim().length < 2} onClick={() => pair({ name: manual.trim() })}>
+              Добавить
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

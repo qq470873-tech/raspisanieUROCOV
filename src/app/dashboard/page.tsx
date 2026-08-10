@@ -1,5 +1,6 @@
 import {
   countUnseenForTeacher,
+  getAllStudents,
   getBookingToken,
   getSlotsWithBookings,
   listBookings,
@@ -10,11 +11,12 @@ import { DashboardShell } from "./shell";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [slots, bookings, token, unseen] = await Promise.all([
+  const [slots, bookings, token, unseen, students] = await Promise.all([
     getSlotsWithBookings(),
     listBookings(),
     getBookingToken(),
     countUnseenForTeacher(),
+    getAllStudents(),
   ]);
 
   const bookingUrl = `${env.appUrl()}/book/${token}`;
@@ -25,6 +27,7 @@ export default async function DashboardPage() {
       bookings={bookings}
       bookingUrl={bookingUrl}
       unseen={unseen}
+      students={students.map((s) => ({ id: s.id, name: s.name }))}
     />
   );
 }

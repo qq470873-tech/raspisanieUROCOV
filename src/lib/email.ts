@@ -67,6 +67,22 @@ export async function notifyStudentProposal(booking: Booking, slot: Slot): Promi
   );
 }
 
+/** Второму ученику — о парном занятии. */
+export async function notifyPairedPartner(
+  partnerEmail: string | null,
+  partnerName: string,
+  withName: string,
+  slot: Slot,
+): Promise<void> {
+  if (!partnerEmail) return;
+  await send(
+    partnerEmail,
+    `Парное занятие: ${when(slot)}`,
+    `<p>${escapeHtml(partnerName)}, у вас парное занятие с <b>${escapeHtml(withName)}</b>:</p>
+     <p><b>${when(slot)}</b></p>`,
+  );
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

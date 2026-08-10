@@ -10,14 +10,17 @@ import { DashboardHeader } from "./dashboard-header";
 import { ScheduleTab } from "./schedule-tab";
 import { RequestsTab } from "./requests-tab";
 
+export type StudentOption = { id: string; name: string };
+
 interface Props {
   slots: SlotWithBooking[];
   bookings: BookingWithSlot[];
   bookingUrl: string;
   unseen: number;
+  students: StudentOption[];
 }
 
-export function DashboardShell({ slots, bookings, bookingUrl, unseen }: Props) {
+export function DashboardShell({ slots, bookings, bookingUrl, unseen, students }: Props) {
   const freeSlots = useMemo(
     () => slots.filter((s) => s.is_active && !s.booking),
     [slots],
@@ -47,7 +50,7 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen }: Props) {
         </TabsContent>
 
         <TabsContent value="requests" className="mt-4">
-          <RequestsTab bookings={bookings} freeSlots={freeSlots} />
+          <RequestsTab bookings={bookings} freeSlots={freeSlots} students={students} />
         </TabsContent>
       </Tabs>
     </div>

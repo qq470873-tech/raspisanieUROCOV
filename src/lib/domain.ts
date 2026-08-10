@@ -25,6 +25,8 @@ export interface Slot {
 export interface Booking {
   id: string;
   slot_id: string;
+  student_id: string | null;
+  partner_student_id: string | null;
   student_1: string;
   student_2: string | null;
   comment: string | null;
@@ -37,9 +39,10 @@ export interface Booking {
   updated_at: string;
 }
 
-/** Слот вместе с активной заявкой (если есть). */
+/** Слот для панели: подтверждённая/предложенная заявка + число ожидающих. */
 export interface SlotWithBooking extends Slot {
   booking: Booking | null;
+  pendingCount: number;
 }
 
 export const WEEKDAYS: { value: number; short: string; long: string }[] = [

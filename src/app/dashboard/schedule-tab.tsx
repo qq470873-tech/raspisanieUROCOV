@@ -33,8 +33,17 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 function statusKey(slot: SlotWithBooking): keyof typeof STATUS_STYLE {
-  if (!slot.booking) return "free";
-  return slot.booking.status as keyof typeof STATUS_STYLE;
+  if (slot.booking) return slot.booking.status as keyof typeof STATUS_STYLE;
+  if (slot.pendingCount > 0) return "pending";
+  return "free";
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
 }
 
 export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
@@ -193,13 +202,18 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
                         {formatRange(slot.start_time, slot.end_time)}
                       </span>
                       <span className="flex items-center gap-1.5">
-                        {slot.booking && (
+                        {slot.booking ? (
                           <span className="truncate text-xs">
                             {slot.booking.student_2
                               ? `${slot.booking.student_1} + ${slot.booking.student_2}`
                               : slot.booking.student_1}
                           </span>
-                        )}
+                        ) : slot.pendingCount > 0 ? (
+                          <span className="truncate text-xs">
+                            {slot.pendingCount}{" "}
+                            {plural(slot.pendingCount, "заявка", "заявки", "заявок")}
+                          </span>
+                        ) : null}
                         <span className="flex items-center opacity-40 transition-opacity group-hover:opacity-100">
                           <button
                             onClick={() => shiftSlot(slot, -30)}

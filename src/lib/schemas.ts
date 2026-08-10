@@ -89,6 +89,15 @@ export const bookingMoveSchema = z
     message: "Укажите слот или время",
   });
 
+/** Сделать занятие парным: второй ученик из списка (student_id) или вручную (name). */
+export const bookingPairSchema = z
+  .object({
+    booking_id: z.string().uuid(),
+    student_id: z.string().uuid().optional(),
+    name: z.string().trim().min(2, "Укажите имя и фамилию").max(120).optional(),
+  })
+  .refine((d) => d.student_id || d.name, { message: "Выберите или впишите ученика" });
+
 /** Ответ ученика на предложение. */
 export const proposalResponseSchema = z.object({
   access_token: z.string().min(1),

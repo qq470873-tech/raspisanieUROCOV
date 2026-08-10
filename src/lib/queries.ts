@@ -115,7 +115,13 @@ export async function getStudentsByHousehold(householdId: string): Promise<Stude
   return (data ?? []) as Student[];
 }
 
-/** Заявки всех детей household — для вкладки «Ваши заявки». */
+export async function getAllStudents(): Promise<Student[]> {
+  const db = supabaseAdmin();
+  const { data } = await db.from("students").select("*").order("name");
+  return (data ?? []) as Student[];
+}
+
+/** Заявки всех детей household (как основной ученик ИЛИ как партнёр по паре). */
 export async function getBookingsForHousehold(
   householdId: string,
 ): Promise<BookingWithSlot[]> {
@@ -123,10 +129,11 @@ export async function getBookingsForHousehold(
   const ids = students.map((s) => s.id);
   if (ids.length === 0) return [];
   const db = supabaseAdmin();
+  const list = `(${ids.join(",")})`;
   const { data } = await db
     .from("bookings")
     .select("*, slot:slots(*)")
-    .in("student_id", ids)
+    .or(`student_id.in.${list},partner_student_id.in.${list}`)
     .order("created_at", { ascending: false });
   return (data ?? []) as BookingWithSlot[];
 }
@@ -145,25 +152,51 @@ export async function listSlots(): Promise<Slot[]> {
   return sortSlots((data ?? []) as Slot[]);
 }
 
-/** Активная заявка (pending/confirmed/proposed) по каждому слоту. */
-async function activeBookingsBySlot(): Promise<Map<string, Booking>> {
+/** Все активные заявки (pending/confirmed/proposed) вместе со слотом. */
+async function activeBookingsWithSlot(): Promise<BookingWithSlot[]> {
   const db = supabaseAdmin();
-  const { data } = await db.from("bookings").select("*").in("status", ACTIVE_STATUSES);
-  const map = new Map<string, Booking>();
-  for (const b of (data ?? []) as Booking[]) map.set(b.slot_id, b);
-  return map;
+  const { data } = await db
+    .from("bookings")
+    .select("*, slot:slots(*)")
+    .in("status", ACTIVE_STATUSES);
+  return (data ?? []) as BookingWithSlot[];
 }
 
-/** Все слоты + их активная заявка — для панели преподавателя. */
+/**
+ * Все слоты для панели преподавателя. Для каждого слота:
+ * booking — подтверждённая или предложенная заявка (если есть);
+ * pendingCount — сколько заявок ожидают решения.
+ */
 export async function getSlotsWithBookings(): Promise<SlotWithBooking[]> {
-  const [slots, bySlot] = await Promise.all([listSlots(), activeBookingsBySlot()]);
-  return slots.map((s) => ({ ...s, booking: bySlot.get(s.id) ?? null }));
+  const [slots, active] = await Promise.all([listSlots(), activeBookingsWithSlot()]);
+  return slots.map((s) => {
+    const onSlot = active.filter((b) => b.slot_id === s.id);
+    const primary =
+      onSlot.find((b) => b.status === "confirmed") ??
+      onSlot.find((b) => b.status === "proposed") ??
+      null;
+    const pendingCount = onSlot.filter((b) => b.status === "pending").length;
+    return { ...s, booking: primary, pendingCount };
+  });
 }
 
-/** Свободные слоты для страницы родителя (активные и без активной заявки). */
+/**
+ * Свободные для записи слоты (страница ученика).
+ * Заявки в ожидании НЕ блокируют время — недоступно только то, что пересекается
+ * с подтверждённой записью.
+ */
 export async function getAvailableSlots(): Promise<Slot[]> {
-  const [slots, bySlot] = await Promise.all([listSlots(), activeBookingsBySlot()]);
-  return slots.filter((s) => s.is_active && !bySlot.has(s.id));
+  const [slots, active] = await Promise.all([listSlots(), activeBookingsWithSlot()]);
+  const confirmed = active.filter((b) => b.status === "confirmed");
+  return slots.filter(
+    (s) =>
+      s.is_active &&
+      !confirmed.some(
+        (b) =>
+          b.slot.weekday === s.weekday &&
+          rangesOverlap(s.start_time, s.end_time, b.slot.start_time, b.slot.end_time),
+      ),
+  );
 }
 
 export async function createSlots(inputs: SlotInput[]): Promise<void> {
@@ -223,7 +256,7 @@ export interface CreateBookingInput {
 
 export type CreateBookingResult =
   | { ok: true; booking: Booking }
-  | { ok: false; reason: "invalid_token" | "slot_unavailable" | "taken" | "forbidden" };
+  | { ok: false; reason: "invalid_token" | "slot_unavailable" | "taken" | "forbidden" | "duplicate" };
 
 /** Создаёт заявку от родителя с проверкой токена, слота и принадлежности ученика. */
 export async function createBooking(input: CreateBookingInput): Promise<CreateBookingResult> {
@@ -242,21 +275,40 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
   }
 
   // Слот должен существовать и быть активным.
-  const { data: slot } = await db
+  const { data: slotData } = await db
     .from("slots")
     .select("*")
     .eq("id", input.slot_id)
     .maybeSingle();
-  if (!slot || !(slot as Slot).is_active) return { ok: false, reason: "slot_unavailable" };
+  const slot = slotData as Slot | null;
+  if (!slot || !slot.is_active) return { ok: false, reason: "slot_unavailable" };
+
+  // Время недоступно, только если пересекается с ПОДТВЕРЖДЁННОЙ записью.
+  const active = await activeBookingsWithSlot();
+  const confirmedClash = active.some(
+    (b) =>
+      b.status === "confirmed" &&
+      b.slot.weekday === slot.weekday &&
+      rangesOverlap(slot.start_time, slot.end_time, b.slot.start_time, b.slot.end_time),
+  );
+  if (confirmedClash) return { ok: false, reason: "taken" };
+
+  // Тот же ученик уже подал активную заявку на этот слот.
+  const dup = active.some(
+    (b) =>
+      b.slot_id === slot.id &&
+      (b.student_id === input.student_id || b.partner_student_id === input.student_id),
+  );
+  if (dup) return { ok: false, reason: "duplicate" };
 
   const { data, error } = await db
     .from("bookings")
     .insert({
       slot_id: input.slot_id,
       student_id: input.student_id,
-      student_1: (student as Student).name,
+      student_1: student.name,
       comment: input.comment || null,
-      email: input.email || (student as Student).email || null,
+      email: input.email || student.email || null,
       status: "pending",
       access_token: randomToken(),
     })
@@ -264,7 +316,6 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     .single();
 
   if (error) {
-    // 23505 — нарушение уникального индекса: слот уже занят активной заявкой.
     if (error.code === "23505") return { ok: false, reason: "taken" };
     throw new Error(error.message);
   }
@@ -298,7 +349,42 @@ async function setStatus(bookingId: string, status: Booking["status"]): Promise<
   await db.from("bookings").update({ status, student_seen: false }).eq("id", bookingId);
 }
 
-export const confirmBooking = (id: string) => setStatus(id, "confirmed");
+/**
+ * Подтверждает заявку и автоматически отклоняет все остальные активные заявки
+ * (ожидающие/предложенные), чьё время пересекается. Возвращает отклонённые —
+ * чтобы уведомить этих учеников.
+ */
+export async function confirmBooking(bookingId: string): Promise<{ rejected: BookingWithSlot[] }> {
+  const db = supabaseAdmin();
+  const booking = await getBookingById(bookingId);
+  if (!booking) return { rejected: [] };
+
+  const active = await activeBookingsWithSlot();
+  const clashing = active.filter(
+    (b) =>
+      b.id !== bookingId &&
+      (b.status === "pending" || b.status === "proposed") &&
+      b.slot.weekday === booking.slot.weekday &&
+      rangesOverlap(
+        booking.slot.start_time,
+        booking.slot.end_time,
+        b.slot.start_time,
+        b.slot.end_time,
+      ),
+  );
+  if (clashing.length > 0) {
+    await db
+      .from("bookings")
+      .update({ status: "rejected", student_seen: false })
+      .in(
+        "id",
+        clashing.map((b) => b.id),
+      );
+  }
+  await setStatus(bookingId, "confirmed");
+  return { rejected: clashing };
+}
+
 export const rejectBooking = (id: string) => setStatus(id, "rejected");
 export const cancelBooking = (id: string) => setStatus(id, "cancelled");
 
@@ -410,6 +496,40 @@ export async function moveBooking(input: MoveBookingInput): Promise<MoveResult> 
     throw new Error(error.message);
   }
   return { ok: true };
+}
+
+export type PairResult =
+  | { ok: true; booking: BookingWithSlot; partner: Student }
+  | { ok: false; reason: "not_found" | "self" };
+
+/** Делает занятие парным: привязывает второго ученика к заявке. */
+export async function setBookingPartner(
+  bookingId: string,
+  partner: { studentId?: string; name?: string },
+): Promise<PairResult> {
+  const db = supabaseAdmin();
+  const booking = await getBookingById(bookingId);
+  if (!booking) return { ok: false, reason: "not_found" };
+
+  let student: Student | null = null;
+  if (partner.studentId) {
+    const { data } = await db.from("students").select("*").eq("id", partner.studentId).maybeSingle();
+    student = (data as Student) ?? null;
+  } else if (partner.name && partner.name.trim()) {
+    const { students } = await registerStudents([partner.name.trim()]);
+    student = students[0] ?? null;
+  }
+  if (!student) return { ok: false, reason: "not_found" };
+  if (student.id === booking.student_id) return { ok: false, reason: "self" };
+
+  const { error } = await db
+    .from("bookings")
+    .update({ partner_student_id: student.id, student_2: student.name })
+    .eq("id", bookingId);
+  if (error) throw new Error(error.message);
+
+  const updated = await getBookingById(bookingId);
+  return { ok: true, booking: updated as BookingWithSlot, partner: student };
 }
 
 /** Ответ ученика на предложенное время. */

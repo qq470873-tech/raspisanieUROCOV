@@ -56,6 +56,19 @@ export function StudentApp({
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const myIds = new Set(students.map((s) => s.id));
+  const isMyPrimary = (b: BookingWithSlot) => !!b.student_id && myIds.has(b.student_id);
+
+  // Подпись заявки: основная запись ребёнка или роль партнёра в парном занятии.
+  function bookingLabel(b: BookingWithSlot): string {
+    if (isMyPrimary(b)) {
+      return b.student_2 ? `${b.student_1} + ${b.student_2} (пара)` : b.student_1;
+    }
+    // Мой ребёнок — партнёр по парному занятию.
+    const mine = students.find((s) => s.id === b.partner_student_id);
+    return `${mine?.name ?? "Ваш ребёнок"} · парное с ${b.student_1}`;
+  }
+
   const activeCount = bookings.filter((b) =>
     ["pending", "confirmed", "proposed"].includes(b.status),
   ).length;
@@ -182,14 +195,14 @@ export function StudentApp({
               {bookings.map((b) => (
                 <Card key={b.id} className="flex flex-col gap-2 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium">{b.student_1}</span>
+                    <span className="font-medium">{bookingLabel(b)}</span>
                     <Badge className={STATUS_STYLE[b.status]}>{STATUS_LABELS[b.status]}</Badge>
                   </div>
                   <div className="text-sm text-muted-foreground">
                     {b.status === "proposed" ? "Предложено: " : ""}
                     {weekdayLong(b.slot.weekday)}, {formatRange(b.slot.start_time, b.slot.end_time)}
                   </div>
-                  {b.status === "proposed" && (
+                  {b.status === "proposed" && isMyPrimary(b) && (
                     <div className="mt-1 flex gap-2">
                       <Button size="sm" disabled={busy} onClick={() => respond(b.access_token, true)} className="gap-1">
                         <Check className="size-4" /> Принять

@@ -23,10 +23,13 @@ export async function POST(request: Request) {
   if (!booking) return json({ error: "Заявка не найдена" }, 404);
 
   switch (action) {
-    case "confirm":
-      await confirmBooking(booking_id);
+    case "confirm": {
+      const { rejected } = await confirmBooking(booking_id);
       await notifyStudentDecision(booking, booking.slot, "confirmed");
+      // Пересекающимся заявкам — авто-отказ (уведомляем каждого).
+      for (const r of rejected) await notifyStudentDecision(r, r.slot, "rejected");
       break;
+    }
     case "reject":
       await rejectBooking(booking_id);
       await notifyStudentDecision(booking, booking.slot, "rejected");
