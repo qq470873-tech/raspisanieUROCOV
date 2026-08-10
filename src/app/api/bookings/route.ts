@@ -1,10 +1,14 @@
 import { badRequest, json } from "@/lib/api";
 import { bookingInputSchema } from "@/lib/schemas";
 import { createBooking, getBookingById } from "@/lib/queries";
+import { getHouseholdId } from "@/lib/student-session";
 import { notifyTeacherNewBooking } from "@/lib/email";
 
-/** Публичный эндпоинт: создание заявки родителем. */
+/** Публичный эндпоинт: создание заявки зарегистрированным учеником. */
 export async function POST(request: Request) {
+  const householdId = await getHouseholdId();
+  if (!householdId) return json({ error: "Сначала укажите имя ученика" }, 401);
+
   const body = await request.json().catch(() => null);
   const parsed = bookingInputSchema.safeParse(body);
   if (!parsed.success) {
@@ -15,14 +19,15 @@ export async function POST(request: Request) {
   const result = await createBooking({
     token: d.token,
     slot_id: d.slot_id,
-    student_1: d.student_1,
-    student_2: d.student_2 || undefined,
+    student_id: d.student_id,
+    householdId,
     comment: d.comment || undefined,
     email: d.email || undefined,
   });
 
   if (!result.ok) {
     if (result.reason === "invalid_token") return json({ error: "Ссылка недействительна" }, 403);
+    if (result.reason === "forbidden") return json({ error: "Ученик не найден" }, 403);
     if (result.reason === "taken")
       return json({ error: "Это время только что заняли. Выберите другое." }, 409);
     return json({ error: "Слот недоступен" }, 409);

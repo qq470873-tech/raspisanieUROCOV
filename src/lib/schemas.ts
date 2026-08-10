@@ -36,12 +36,21 @@ export const slotUpdateSchema = z
     path: ["end_time"],
   });
 
-/** Заявка от родителя. student_1 = ФИО ученика. */
+/** Регистрация ученика(-ов): имя и фамилия, 1–2 ребёнка. */
+export const studentRegisterSchema = z.object({
+  token: z.string().min(1),
+  names: z
+    .array(z.string().trim().min(2, "Укажите имя и фамилию").max(120))
+    .min(1, "Укажите имя и фамилию")
+    .max(2),
+  email: z.string().trim().email("Некорректный email").optional().or(z.literal("")),
+});
+
+/** Заявка от зарегистрированного ученика. */
 export const bookingInputSchema = z.object({
   token: z.string().min(1),
   slot_id: z.string().uuid(),
-  student_1: z.string().trim().min(2, "Укажите имя и фамилию").max(120),
-  student_2: z.string().trim().max(120).optional().or(z.literal("")),
+  student_id: z.string().uuid(),
   comment: z.string().trim().max(500).optional().or(z.literal("")),
   email: z.string().trim().email("Некорректный email").optional().or(z.literal("")),
 });

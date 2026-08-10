@@ -43,10 +43,92 @@ export async function rotateBookingToken(): Promise<string> {
   return token;
 }
 
-async function isValidToken(token: string): Promise<boolean> {
+export async function isValidToken(token: string): Promise<boolean> {
   const db = supabaseAdmin();
   const { data } = await db.from("settings").select("booking_token").eq("id", 1).maybeSingle();
   return !!data?.booking_token && data.booking_token === token;
+}
+
+// ── Ученики (личность родителя/детей) ─────────────────────────────────────────────
+
+export interface Student {
+  id: string;
+  name: string;
+  email: string | null;
+  household_id: string;
+  created_at: string;
+}
+
+const norm = (s: string) => s.trim().toLowerCase();
+
+/**
+ * Регистрирует одного или двух детей: находит по имени существующих или создаёт
+ * новых и объединяет их в одно household (для группировки братьев/сестёр).
+ * Возвращает учеников и общий household_id.
+ */
+export async function registerStudents(
+  names: string[],
+  email?: string,
+): Promise<{ students: Student[]; householdId: string }> {
+  const db = supabaseAdmin();
+  const { data: all } = await db.from("students").select("*");
+  const existing = (all ?? []) as Student[];
+
+  const result: Student[] = [];
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name) continue;
+    const found = existing.find((s) => norm(s.name) === norm(name));
+    if (found) {
+      result.push(found);
+    } else {
+      const { data, error } = await db
+        .from("students")
+        .insert({ name, email: email || null })
+        .select("*")
+        .single();
+      if (error) throw new Error(error.message);
+      const created = data as Student;
+      existing.push(created);
+      result.push(created);
+    }
+  }
+
+  // Общий household: берём уже существующий у кого-то из детей, иначе — первого.
+  const householdId = result[0]?.household_id ?? crypto.randomUUID();
+  const ids = result.map((s) => s.id);
+  if (ids.length > 0) {
+    const patch: { household_id: string; email?: string } = { household_id: householdId };
+    if (email) patch.email = email;
+    await db.from("students").update(patch).in("id", ids);
+  }
+  return { students: result.map((s) => ({ ...s, household_id: householdId })), householdId };
+}
+
+export async function getStudentsByHousehold(householdId: string): Promise<Student[]> {
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("students")
+    .select("*")
+    .eq("household_id", householdId)
+    .order("created_at");
+  return (data ?? []) as Student[];
+}
+
+/** Заявки всех детей household — для вкладки «Ваши заявки». */
+export async function getBookingsForHousehold(
+  householdId: string,
+): Promise<BookingWithSlot[]> {
+  const students = await getStudentsByHousehold(householdId);
+  const ids = students.map((s) => s.id);
+  if (ids.length === 0) return [];
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("bookings")
+    .select("*, slot:slots(*)")
+    .in("student_id", ids)
+    .order("created_at", { ascending: false });
+  return (data ?? []) as BookingWithSlot[];
 }
 
 // ── Слоты ────────────────────────────────────────────────────────────────────────
@@ -133,21 +215,31 @@ export async function listBookings(): Promise<BookingWithSlot[]> {
 export interface CreateBookingInput {
   token: string;
   slot_id: string;
-  student_1: string;
-  student_2?: string;
+  student_id: string;
+  householdId: string;
   comment?: string;
   email?: string;
 }
 
 export type CreateBookingResult =
   | { ok: true; booking: Booking }
-  | { ok: false; reason: "invalid_token" | "slot_unavailable" | "taken" };
+  | { ok: false; reason: "invalid_token" | "slot_unavailable" | "taken" | "forbidden" };
 
-/** Создаёт заявку от родителя с проверкой токена и доступности слота. */
+/** Создаёт заявку от родителя с проверкой токена, слота и принадлежности ученика. */
 export async function createBooking(input: CreateBookingInput): Promise<CreateBookingResult> {
   if (!(await isValidToken(input.token))) return { ok: false, reason: "invalid_token" };
 
   const db = supabaseAdmin();
+
+  // Ученик должен принадлежать текущему household (защита от подмены).
+  const { data: student } = await db
+    .from("students")
+    .select("*")
+    .eq("id", input.student_id)
+    .maybeSingle();
+  if (!student || (student as Student).household_id !== input.householdId) {
+    return { ok: false, reason: "forbidden" };
+  }
 
   // Слот должен существовать и быть активным.
   const { data: slot } = await db
@@ -161,10 +253,10 @@ export async function createBooking(input: CreateBookingInput): Promise<CreateBo
     .from("bookings")
     .insert({
       slot_id: input.slot_id,
-      student_1: input.student_1,
-      student_2: input.student_2 || null,
+      student_id: input.student_id,
+      student_1: (student as Student).name,
       comment: input.comment || null,
-      email: input.email || null,
+      email: input.email || (student as Student).email || null,
       status: "pending",
       access_token: randomToken(),
     })

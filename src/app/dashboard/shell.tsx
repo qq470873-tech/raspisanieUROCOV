@@ -5,6 +5,7 @@ import type { SlotWithBooking } from "@/lib/domain";
 import type { BookingWithSlot } from "@/lib/queries";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { DashboardHeader } from "./dashboard-header";
 import { ScheduleTab } from "./schedule-tab";
 import { RequestsTab } from "./requests-tab";
@@ -25,6 +26,7 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen }: Props) {
 
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:py-8">
+      <AutoRefresh seconds={12} />
       <DashboardHeader bookingUrl={bookingUrl} unseen={unseen} />
 
       <Tabs defaultValue="schedule" className="mt-6">

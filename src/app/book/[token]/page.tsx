@@ -1,7 +1,14 @@
 import { notFound } from "next/navigation";
 import { CalendarHeart } from "lucide-react";
-import { getAvailableSlots, getBookingToken } from "@/lib/queries";
-import { BookingClient } from "./booking-client";
+import {
+  getAvailableSlots,
+  getBookingToken,
+  getBookingsForHousehold,
+  getStudentsByHousehold,
+} from "@/lib/queries";
+import { getHouseholdId } from "@/lib/student-session";
+import { RegisterClient } from "./register-client";
+import { StudentApp } from "./student-app";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +21,13 @@ export default async function BookPage({
   const currentToken = await getBookingToken();
   if (token !== currentToken) notFound();
 
-  const slots = await getAvailableSlots();
+  const householdId = await getHouseholdId();
+  const students = householdId ? await getStudentsByHousehold(householdId) : [];
+  const registered = students.length > 0;
+
+  const [slots, bookings] = registered
+    ? await Promise.all([getAvailableSlots(), getBookingsForHousehold(householdId!)])
+    : [[], []];
 
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-10">
@@ -26,11 +39,22 @@ export default async function BookPage({
           Запись на <span className="text-gradient">занятия</span>
         </h1>
         <p className="mt-2 max-w-md text-muted-foreground">
-          Выберите удобное свободное время — и укажите имя и фамилию ученика.
-          Это займёт меньше минуты ✨
+          {registered
+            ? "Выберите удобное свободное время. Ваши заявки — на соседней вкладке."
+            : "Как зовут ученика? Укажите имя и фамилию — это займёт меньше минуты ✨"}
         </p>
       </header>
-      <BookingClient token={token} slots={slots} />
+
+      {registered ? (
+        <StudentApp
+          token={token}
+          students={students.map((s) => ({ id: s.id, name: s.name }))}
+          slots={slots}
+          bookings={bookings}
+        />
+      ) : (
+        <RegisterClient token={token} />
+      )}
     </main>
   );
 }
