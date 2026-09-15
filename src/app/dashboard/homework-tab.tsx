@@ -37,32 +37,34 @@ export function HomeworkTab() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(220px,300px)_1fr]">
-      <Card className="flex max-h-[70vh] flex-col gap-2 p-3">
+      <Card className="flex max-h-[70vh] min-w-0 flex-col gap-2 p-3">
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск ученика…" className="h-9" />
-        <div className="flex flex-col gap-1 overflow-y-auto">
+        <div className="flex min-w-0 flex-col gap-1 overflow-y-auto">
           {filtered.map((s) => (
             <button
               key={s.id}
               onClick={() => setSelected(s)}
               className={cn(
-                "truncate rounded-lg px-3 py-2 text-left text-sm transition-colors",
+                "flex min-w-0 items-center rounded-lg px-3 py-2 text-left text-sm transition-colors",
                 selected?.id === s.id ? "bg-primary text-primary-foreground" : "hover:bg-muted",
               )}
             >
-              {s.name}
+              <span className="truncate">{s.name}</span>
             </button>
           ))}
         </div>
       </Card>
 
-      {selected ? (
-        <StudentHomework student={selected} />
-      ) : (
-        <Card className="flex flex-col items-center justify-center gap-3 p-10 text-center text-muted-foreground">
-          <BookOpen className="size-8" />
-          Выберите ученика, чтобы записать домашнее задание.
-        </Card>
-      )}
+      <div className="min-w-0">
+        {selected ? (
+          <StudentHomework student={selected} />
+        ) : (
+          <Card className="flex flex-col items-center justify-center gap-3 p-10 text-center text-muted-foreground">
+            <BookOpen className="size-8" />
+            Выберите ученика, чтобы записать домашнее задание.
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

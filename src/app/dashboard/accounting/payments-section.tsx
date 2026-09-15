@@ -59,9 +59,9 @@ export function PaymentsSection() {
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(220px,300px)_1fr]">
       {/* Список учеников */}
-      <Card className="flex max-h-[70vh] flex-col gap-2 p-3">
+      <Card className="flex max-h-[70vh] min-w-0 flex-col gap-2 p-3">
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск ученика…" className="h-9" />
-        <div className="flex flex-col gap-1 overflow-y-auto">
+        <div className="flex min-w-0 flex-col gap-1 overflow-y-auto">
           {filtered.map((s) => {
             const debt = s.balanceKopecks < 0;
             return (
@@ -114,7 +114,7 @@ function StudentDetail({
   const debt = student.balanceKopecks < 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       {/* Баланс */}
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex items-center justify-between">
