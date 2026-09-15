@@ -86,7 +86,12 @@ async function callGemini(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: history.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-        generationConfig: { temperature: 0.4, maxOutputTokens: 1200 },
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: 3000,
+          // Отключаем «мышление», иначе оно съедает бюджет вывода и ответ обрывается.
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
     },
   );
