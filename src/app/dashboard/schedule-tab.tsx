@@ -30,6 +30,7 @@ import {
   type SlotWithBooking,
 } from "@/lib/domain";
 import type { BookingEvent, BookingWithSlot } from "@/lib/queries";
+import { todayNN, weekdayOf } from "@/lib/time-nn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -93,6 +94,11 @@ export function ScheduleTab({
 
   const byDay = (wd: number) => slots.filter((s) => s.weekday === wd);
   const refresh = () => router.refresh();
+
+  const todayW = weekdayOf(todayNN());
+  const todaySlots = byDay(todayW).sort(
+    (a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
+  );
 
   async function addSlot() {
     if (end <= start) return toast.error("Конец должен быть позже начала");
@@ -172,6 +178,28 @@ export function ScheduleTab({
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Сегодня */}
+      <Card className="border-primary/20 bg-primary/5 p-4">
+        <p className="mb-2 text-sm font-semibold">Сегодня · {weekdayLong(todayW)}</p>
+        {todaySlots.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Занятий нет 🌿</p>
+        ) : (
+          <ul className="flex flex-wrap gap-2">
+            {todaySlots.map((s) => (
+              <li
+                key={s.id}
+                className={`rounded-lg border px-2.5 py-1.5 text-sm ${
+                  s.booking ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40" : "border-border bg-background text-muted-foreground"
+                }`}
+              >
+                <span className="tabular-nums font-medium">{formatRange(s.start_time, s.end_time)}</span>{" "}
+                {s.booking ? bookingNames(s.booking) : "свободно"}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       {/* Тулбар */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">

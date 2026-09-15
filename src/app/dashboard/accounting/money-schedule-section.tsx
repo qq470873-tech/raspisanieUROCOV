@@ -32,6 +32,10 @@ export function MoneyScheduleSection() {
   const [week, setWeek] = useState(() => currentWeekMonday());
   const [slots, setSlots] = useState<MoneySlot[]>([]);
   const [seasonStart, setSeasonStart] = useState<string | null>(null);
+  const [weekIncome, setWeekIncome] = useState(0);
+  const [monthIncome, setMonthIncome] = useState(0);
+  const [monthLabel, setMonthLabel] = useState("");
+  const [debtors, setDebtors] = useState<{ name: string; amountKopecks: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -44,6 +48,10 @@ export function MoneyScheduleSection() {
         if (cancelled) return;
         setSlots(data.slots);
         setSeasonStart(data.seasonStartMonday);
+        setWeekIncome(data.weekIncomeKopecks ?? 0);
+        setMonthIncome(data.monthIncomeKopecks ?? 0);
+        setMonthLabel(data.monthLabel ?? "");
+        setDebtors(data.debtors ?? []);
       })
       .catch((e) => !cancelled && toast.error(e instanceof Error ? e.message : "Ошибка"))
       .finally(() => !cancelled && setLoading(false));
@@ -98,6 +106,38 @@ export function MoneyScheduleSection() {
         )}
         <Legend />
       </Card>
+
+      {/* Доход + должники */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-3">
+          <p className="text-xs text-muted-foreground">Доход за неделю</p>
+          <p className="text-lg font-semibold tabular-nums">{formatMoney(weekIncome)}</p>
+        </Card>
+        <Card className="p-3">
+          <p className="text-xs text-muted-foreground">Доход за {monthLabel}</p>
+          <p className="text-lg font-semibold tabular-nums">{formatMoney(monthIncome)}</p>
+        </Card>
+        <Card className="p-3">
+          <p className="text-xs text-muted-foreground">Должники ({debtors.length})</p>
+          {debtors.length === 0 ? (
+            <p className="text-sm text-emerald-600 dark:text-emerald-300">Долгов нет 🎉</p>
+          ) : (
+            <div className="mt-0.5 flex flex-col gap-0.5 text-sm">
+              {debtors.slice(0, 3).map((d) => (
+                <div key={d.name} className="flex justify-between gap-2">
+                  <span className="truncate">{d.name}</span>
+                  <span className="shrink-0 font-medium tabular-nums text-red-600 dark:text-red-300">
+                    {formatMoney(d.amountKopecks)}
+                  </span>
+                </div>
+              ))}
+              {debtors.length > 3 && (
+                <span className="text-xs text-muted-foreground">и ещё {debtors.length - 3}…</span>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
 
       {loading && slots.length === 0 ? (
         <Card className="p-8 text-center text-muted-foreground">Загрузка…</Card>

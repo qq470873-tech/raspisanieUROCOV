@@ -451,6 +451,10 @@ export interface MoneyScheduleData {
   weekMonday: string;
   slots: MoneySlot[];
   seasonStartMonday: string;
+  weekIncomeKopecks: number;
+  monthIncomeKopecks: number;
+  monthLabel: string;
+  debtors: { name: string; amountKopecks: number }[];
 }
 
 /** Денежное расписание на неделю (Пн = weekMonday). Баланс — на конец этой недели. */
@@ -491,7 +495,42 @@ export async function getMoneySchedule(weekMonday: string): Promise<MoneySchedul
     };
   });
 
-  return { weekMonday, slots, seasonStartMonday: mondayOf(SEASON_START) };
+  // Доход (проведённые/запланированные занятия × цена) за неделю и за месяц.
+  const income = (from: string, to: string) => {
+    let sum = 0;
+    for (const p of flat) {
+      const skips = new Set(
+        exceptions
+          .filter((e) => e.slot_id === p.slot.id && (e.student_id === null || e.student_id === p.student_id))
+          .map((e) => e.date),
+      );
+      sum += weekdayDatesInRange(from, to, p.slot.weekday).filter((d) => !skips.has(d)).length * p.price_kopecks;
+    }
+    return sum;
+  };
+
+  const [y, m] = weekMonday.split("-").map(Number);
+  const monthFrom = `${y}-${String(m).padStart(2, "0")}-01`;
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const monthTo = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  const monthLabel = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(
+    new Date(Date.UTC(y, m - 1, 1)),
+  );
+
+  const debtors = balances
+    .filter((b) => b.balanceKopecks < 0)
+    .map((b) => ({ name: b.name, amountKopecks: b.balanceKopecks }))
+    .sort((a, b) => a.amountKopecks - b.amountKopecks);
+
+  return {
+    weekMonday,
+    slots,
+    seasonStartMonday: mondayOf(SEASON_START),
+    weekIncomeKopecks: income(weekMonday, addDays(weekMonday, 6)),
+    monthIncomeKopecks: income(monthFrom, monthTo),
+    monthLabel,
+    debtors,
+  };
 }
 
 /** Отмечает/снимает «урока не было» для всего слота на дату (идемпотентно). */
