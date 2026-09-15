@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Check, Combine, Pencil, Trophy, Users, X } from "lucide-react";
+import { Check, Combine, Pencil, Trash2, Trophy, UserPlus, Users, X } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import { STATUS_LABELS, formatRange, weekdayShort, type BookingStatus } from "@/lib/domain";
 import type { StudentOverview } from "@/lib/queries";
@@ -32,6 +32,37 @@ export function StudentsTab({ overview }: { overview: StudentOverview[] }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [mergeFor, setMergeFor] = useState<{ id: string; name: string } | null>(null);
+  const [addName, setAddName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function addStudent() {
+    if (addName.trim().length < 2) {
+      toast.error("Укажите имя и фамилию");
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiPost("/api/students/add", { name: addName.trim() });
+      toast.success("Ученик добавлен");
+      setAddName("");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeStudent(id: string, nm: string) {
+    if (!confirm(`Удалить «${nm}»? Его занятия, оплаты и ДЗ будут удалены безвозвратно.`)) return;
+    try {
+      await apiPost("/api/students/delete", { id });
+      toast.success("Ученик удалён");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    }
+  }
 
   const households = useMemo(() => {
     const map = new Map<string, StudentOverview[]>();
@@ -58,17 +89,28 @@ export function StudentsTab({ overview }: { overview: StudentOverview[] }) {
     }
   }
 
-  if (overview.length === 0) {
-    return (
-      <Card className="p-10 text-center text-muted-foreground">
-        Пока никто не зарегистрировался.
-      </Card>
-    );
-  }
-
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Добавление ученика */}
+      <Card className="mb-4 flex flex-col gap-2 p-4 sm:flex-row sm:items-end">
+        <div className="flex flex-1 flex-col gap-1.5">
+          <label className="text-sm font-medium">Новый ученик</label>
+          <Input
+            value={addName}
+            onChange={(e) => setAddName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addStudent()}
+            placeholder="Имя и фамилия"
+          />
+        </div>
+        <Button onClick={addStudent} disabled={busy} className="gap-1.5">
+          <UserPlus className="size-4" /> Добавить
+        </Button>
+      </Card>
+
+      {overview.length === 0 ? (
+        <Card className="p-10 text-center text-muted-foreground">Пока никого нет — добавьте ученика выше.</Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {households.map((members, i) => (
           <Card key={i} className="flex flex-col gap-3 p-4">
             {members.length > 1 && (
@@ -120,6 +162,13 @@ export function StudentsTab({ overview }: { overview: StudentOverview[] }) {
                         >
                           <Combine className="size-3.5" />
                         </button>
+                        <button
+                          onClick={() => removeStudent(s.id, s.name)}
+                          className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
+                          title="Удалить ученика"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
                       </span>
                     </>
                   )}
@@ -156,7 +205,8 @@ export function StudentsTab({ overview }: { overview: StudentOverview[] }) {
             ))}
           </Card>
         ))}
-      </div>
+        </div>
+      )}
 
       <MergeDialog
         source={mergeFor}

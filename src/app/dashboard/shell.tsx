@@ -106,6 +106,22 @@ export function DashboardShell({ slots, overview, history }: Props) {
         </button>
       </div>
 
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        title={collapsed ? "Развернуть меню" : "Свернуть меню"}
+        className={cn(
+          "mb-1 hidden items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent lg:flex",
+          !full && "justify-center px-0",
+        )}
+      >
+        {collapsed ? (
+          <PanelLeftOpen className="size-4 shrink-0" />
+        ) : (
+          <PanelLeftClose className="size-4 shrink-0" />
+        )}
+        {full && <span>Свернуть</span>}
+      </button>
+
       <nav className="flex flex-1 flex-col gap-0.5">
         {NAV.map((item) => {
           const Icon = item.icon;
@@ -175,13 +191,6 @@ export function DashboardShell({ slots, overview, history }: Props) {
               title="Меню"
             >
               <Menu className="size-5" />
-            </button>
-            <button
-              onClick={() => setCollapsed((v) => !v)}
-              className="hidden rounded-md p-2 text-muted-foreground hover:bg-foreground/10 lg:block"
-              title={collapsed ? "Развернуть меню" : "Свернуть меню"}
-            >
-              {collapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
             </button>
             <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{VIEW_TITLES[active]}</h1>
           </div>

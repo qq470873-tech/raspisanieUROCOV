@@ -135,6 +135,19 @@ export async function renameStudent(id: string, name: string): Promise<void> {
   await db.from("bookings").update({ student_3: trimmed }).eq("partner2_student_id", id);
 }
 
+/**
+ * Удаляет ученика: отцепляет его от пар/троек, удаляет занятия, где он основной,
+ * затем удаляет самого ученика (оплаты/ДЗ/цены уходят каскадом).
+ */
+export async function deleteStudent(id: string): Promise<void> {
+  const db = supabaseAdmin();
+  await db.from("bookings").update({ partner_student_id: null, student_2: null }).eq("partner_student_id", id);
+  await db.from("bookings").update({ partner2_student_id: null, student_3: null }).eq("partner2_student_id", id);
+  await db.from("bookings").delete().eq("student_id", id);
+  const { error } = await db.from("students").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 /** Сливает дубль: все записи source переходят на target, source удаляется. */
 export async function mergeStudents(sourceId: string, targetId: string): Promise<void> {
   if (sourceId === targetId) return;
