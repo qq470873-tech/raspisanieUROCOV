@@ -82,14 +82,20 @@ interface GeminiCall {
   status: number;
   error?: string;
   overloaded?: boolean;
+  invalid?: boolean;
 }
 
-/** Один вызов конкретной модели Gemini. */
+/** Один вызов конкретной модели Gemini. thinking=false — без thinkingConfig (для моделей, что его не принимают). */
 async function callGemini(
   model: string,
   system: string,
   history: ChatMessage[],
+  thinking: boolean,
 ): Promise<GeminiCall> {
+  const generationConfig: Record<string, unknown> = { temperature: 0.4, maxOutputTokens: 3000 };
+  // thinkingBudget:0 отключает «мышление» (иначе ответ обрывается). Не все модели его принимают.
+  if (thinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
@@ -98,12 +104,7 @@ async function callGemini(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: history.map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-        generationConfig: {
-          temperature: 0.4,
-          maxOutputTokens: 3000,
-          // Отключаем «мышление», иначе оно съедает бюджет вывода и ответ обрывается.
-          thinkingConfig: { thinkingBudget: 0 },
-        },
+        generationConfig,
       }),
     },
   );
@@ -112,7 +113,8 @@ async function callGemini(
   if (!res.ok) {
     const msg = data.error?.message ?? `Gemini вернул ошибку ${res.status}`;
     const overloaded = res.status === 429 || res.status >= 500 || /demand|overload/i.test(msg);
-    return { ok: false, status: res.status, error: msg, overloaded };
+    const invalid = res.status === 400 || /invalid argument/i.test(msg);
+    return { ok: false, status: res.status, error: msg, overloaded, invalid };
   }
   const text = data.candidates?.[0]?.content?.parts
     ?.map((p) => p.text ?? "")
@@ -133,14 +135,21 @@ export async function askAssistant(history: ChatMessage[]): Promise<string> {
   const context = await buildContext();
   const system = `${SYSTEM_PROMPT}\n\n=== ДАННЫЕ ПРОГРАММЫ ===\n${context}`;
 
-  // Основная модель + запасная на случай «high demand».
-  const models = [env.geminiModel(), "gemini-flash-lite-latest"];
+  const primary = env.geminiModel();
+  // 1) основная с thinkingConfig; 2) она же без него (если модель его не приняла — 400);
+  // 3) запасная без thinkingConfig (на случай перегрузки).
+  const attempts: { model: string; thinking: boolean }[] = [
+    { model: primary, thinking: true },
+    { model: primary, thinking: false },
+    { model: "gemini-flash-lite-latest", thinking: false },
+  ];
   let last: GeminiCall | null = null;
-  for (const model of models) {
-    const r = await callGemini(model, system, history);
+  for (const a of attempts) {
+    const r = await callGemini(a.model, system, history, a.thinking);
     if (r.ok) return r.text!;
     last = r;
-    if (!r.overloaded) break; // не перегрузка (напр. блокировка) — не пробуем дальше
+    // Ретраим только при перегрузке или invalid-argument (напр. неподдержанный thinkingConfig).
+    if (!r.overloaded && !r.invalid) break;
   }
   throw new Error(last?.error ?? "Ошибка ассистента");
 }
