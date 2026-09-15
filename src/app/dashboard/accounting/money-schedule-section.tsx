@@ -225,11 +225,11 @@ function SlotCard({
             <span className="flex-1 truncate text-xs">{p.name}</span>
             <span
               className={cn(
-                "shrink-0 text-[11px] tabular-nums",
+                "shrink-0 text-[11px]",
                 p.status === "paid" ? "text-emerald-600 dark:text-emerald-300" : "text-red-600 dark:text-red-300",
               )}
             >
-              {formatMoney(p.balanceKopecks)}
+              {p.status === "paid" ? "оплачено" : "долг"}
             </span>
           </div>
         ))

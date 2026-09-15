@@ -432,9 +432,7 @@ export async function setBalanceManual(studentId: string, targetKopecks: number)
 export interface MoneyPayer {
   student_id: string;
   name: string;
-  price_kopecks: number;
-  balanceKopecks: number;
-  status: "paid" | "debt";
+  status: "paid" | "debt"; // хватило ли денег именно на это занятие
 }
 
 export interface MoneySlot {
@@ -457,21 +455,49 @@ export interface MoneyScheduleData {
   debtors: { name: string; amountKopecks: number }[];
 }
 
-/** Денежное расписание на неделю (Пн = weekMonday). Баланс — на конец этой недели. */
+/**
+ * Денежное расписание на неделю (Пн = weekMonday).
+ * Каждое занятие красится по остатку НА СВОЮ ДАТУ: хватает ли денег именно на него
+ * с учётом всех занятий ученика ДО этой даты. Так занятия зелёные, пока не кончатся
+ * деньги, и краснеют ровно с того, на которое уже не хватило.
+ */
 export async function getMoneySchedule(weekMonday: string): Promise<MoneyScheduleData> {
-  const asOf = addDays(weekMonday, 6);
-  const [{ flat, activeSlots }, balances, exceptions] = await Promise.all([
+  const [{ flat, activeSlots }, payments, exceptions, billing, balancesNow] = await Promise.all([
     getFlatPayers(),
-    getStudentBalances(asOf),
+    selectAll<Payment>("payments"),
     selectAll<LessonException>("lesson_exceptions"),
+    selectAll<{ student_id: string; anchor_date: string }>("student_billing"),
+    getStudentBalances(),
   ]);
-  const balMap = new Map(balances.map((b) => [b.studentId, b.balanceKopecks]));
+
+  const anchorOf = (sid: string) => billing.find((b) => b.student_id === sid)?.anchor_date ?? todayNN();
+  const payersByStudent = new Map<string, FlatPayer[]>();
   const bySlot = new Map<string, FlatPayer[]>();
   for (const p of flat) {
-    const arr = bySlot.get(p.slot.id) ?? [];
-    arr.push(p);
-    bySlot.set(p.slot.id, arr);
+    (payersByStudent.get(p.student_id) ?? payersByStudent.set(p.student_id, []).get(p.student_id))!.push(p);
+    (bySlot.get(p.slot.id) ?? bySlot.set(p.slot.id, []).get(p.slot.id))!.push(p);
   }
+
+  const skipsFor = (slotId: string, sid: string) =>
+    new Set(
+      exceptions
+        .filter((e) => e.slot_id === slotId && (e.student_id === null || e.student_id === sid))
+        .map((e) => e.date),
+    );
+
+  const creditedUpTo = (sid: string, date: string) =>
+    payments.filter((p) => p.student_id === sid && p.paid_at <= date).reduce((s, p) => s + p.amount_kopecks, 0);
+
+  // Списано ученику строго ДО указанной даты (по всем его занятиям).
+  const consumedBefore = (sid: string, date: string) => {
+    const before = addDays(date, -1);
+    let sum = 0;
+    for (const p of payersByStudent.get(sid) ?? []) {
+      const skips = skipsFor(p.slot.id, sid);
+      sum += weekdayDatesInRange(anchorOf(sid), before, p.slot.weekday).filter((d) => !skips.has(d)).length * p.price_kopecks;
+    }
+    return sum;
+  };
 
   const slots: MoneySlot[] = activeSlots.map((s) => {
     const date = addDays(weekMonday, s.weekday - 1);
@@ -483,13 +509,11 @@ export async function getMoneySchedule(weekMonday: string): Promise<MoneySchedul
       date,
       skipped: exceptions.some((e) => e.slot_id === s.id && e.student_id === null && e.date === date),
       payers: (bySlot.get(s.id) ?? []).map((p) => {
-        const bal = balMap.get(p.student_id) ?? 0;
+        const remaining = creditedUpTo(p.student_id, date) - consumedBefore(p.student_id, date);
         return {
           student_id: p.student_id,
           name: p.name,
-          price_kopecks: p.price_kopecks,
-          balanceKopecks: bal,
-          status: (bal >= p.price_kopecks ? "paid" : "debt") as "paid" | "debt",
+          status: (remaining >= p.price_kopecks ? "paid" : "debt") as "paid" | "debt",
         };
       }),
     };
@@ -499,11 +523,7 @@ export async function getMoneySchedule(weekMonday: string): Promise<MoneySchedul
   const income = (from: string, to: string) => {
     let sum = 0;
     for (const p of flat) {
-      const skips = new Set(
-        exceptions
-          .filter((e) => e.slot_id === p.slot.id && (e.student_id === null || e.student_id === p.student_id))
-          .map((e) => e.date),
-      );
+      const skips = skipsFor(p.slot.id, p.student_id);
       sum += weekdayDatesInRange(from, to, p.slot.weekday).filter((d) => !skips.has(d)).length * p.price_kopecks;
     }
     return sum;
@@ -517,7 +537,7 @@ export async function getMoneySchedule(weekMonday: string): Promise<MoneySchedul
     new Date(Date.UTC(y, m - 1, 1)),
   );
 
-  const debtors = balances
+  const debtors = balancesNow
     .filter((b) => b.balanceKopecks < 0)
     .map((b) => ({ name: b.name, amountKopecks: b.balanceKopecks }))
     .sort((a, b) => a.amountKopecks - b.amountKopecks);
