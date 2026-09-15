@@ -4,7 +4,19 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, Copy, Plus, Printer, Trash2 } from "lucide-react";
+import {
+  CalendarClock,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  History,
+  Plus,
+  Printer,
+  Trash2,
+  Unlock,
+  UserMinus,
+  Users,
+} from "lucide-react";
 import { apiPost, apiSend } from "@/lib/client";
 import {
   WEEKDAYS,
@@ -12,8 +24,12 @@ import {
   formatTime,
   shiftTime,
   timeToMinutes,
+  weekdayLong,
+  type Booking,
+  type Slot,
   type SlotWithBooking,
 } from "@/lib/domain";
+import type { BookingEvent, BookingWithSlot } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -24,13 +40,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { HistoryTab } from "./history-tab";
+import { ManualDialog, MoveDialog, PairDialog, type StudentOption } from "./booking-dialogs";
 
 const STATUS_STYLE: Record<string, string> = {
   free: "border-border bg-background",
-  pending: "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
   confirmed:
     "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200",
   proposed: "border-sky-300 bg-sky-50 text-sky-900 dark:bg-sky-950/40 dark:text-sky-200",
+  pending: "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
 };
 
 function statusKey(slot: SlotWithBooking): keyof typeof STATUS_STYLE {
@@ -39,35 +64,45 @@ function statusKey(slot: SlotWithBooking): keyof typeof STATUS_STYLE {
   return "free";
 }
 
-function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-  return many;
+function bookingNames(b: Pick<Booking, "student_1" | "student_2" | "student_3">) {
+  return [b.student_1, b.student_2, b.student_3].filter(Boolean).join(" + ");
 }
 
-export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
+export function ScheduleTab({
+  slots,
+  freeSlots,
+  students,
+  history,
+}: {
+  slots: SlotWithBooking[];
+  freeSlots: Slot[];
+  students: StudentOption[];
+  history: BookingEvent[];
+}) {
   const router = useRouter();
   const [weekday, setWeekday] = useState("1");
   const [start, setStart] = useState("09:00");
   const [end, setEnd] = useState("10:00");
   const [busy, setBusy] = useState(false);
 
+  const [manualOpen, setManualOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [actionsFor, setActionsFor] = useState<BookingWithSlot | null>(null);
+  const [moveFor, setMoveFor] = useState<{ booking: BookingWithSlot; mode: "move" } | null>(null);
+  const [pairFor, setPairFor] = useState<BookingWithSlot | null>(null);
+
   const byDay = (wd: number) => slots.filter((s) => s.weekday === wd);
+  const refresh = () => router.refresh();
 
   async function addSlot() {
-    if (end <= start) {
-      toast.error("Конец должен быть позже начала");
-      return;
-    }
+    if (end <= start) return toast.error("Конец должен быть позже начала");
     setBusy(true);
     try {
       await apiPost("/api/slots", {
         slots: [{ weekday: Number(weekday), start_time: start, end_time: end }],
       });
       toast.success("Слот добавлен");
-      router.refresh();
+      refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
     } finally {
@@ -79,70 +114,77 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
     const newStart = shiftTime(slot.start_time, delta);
     const newEnd = shiftTime(slot.end_time, delta);
     const duration = timeToMinutes(slot.end_time) - timeToMinutes(slot.start_time);
-    // Если упёрлись в границу суток — длительность изменится, значит двигать некуда.
     if (timeToMinutes(newEnd) - timeToMinutes(newStart) !== duration) {
       toast.info(delta < 0 ? "Уже начало суток" : "Уже конец суток");
       return;
     }
     try {
-      await apiSend(`/api/slots/${slot.id}`, "PATCH", {
-        start_time: newStart,
-        end_time: newEnd,
-      });
-      router.refresh();
+      await apiSend(`/api/slots/${slot.id}`, "PATCH", { start_time: newStart, end_time: newEnd });
+      refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
     }
   }
 
   async function removeSlot(slot: SlotWithBooking) {
-    if (slot.booking) {
-      if (!confirm("В слоте есть заявка. Удалить слот вместе с ней?")) return;
-    }
+    if (slot.booking && !confirm("В слоте есть запись. Удалить слот вместе с ней?")) return;
     try {
       await apiSend(`/api/slots/${slot.id}`, "DELETE");
-      router.refresh();
+      refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
     }
   }
 
   async function copyDayToAll(wd: number) {
-    const source = byDay(wd).map((s) => ({
-      start: formatTime(s.start_time),
-      end: formatTime(s.end_time),
-    }));
+    const source = byDay(wd).map((s) => ({ start: formatTime(s.start_time), end: formatTime(s.end_time) }));
     if (source.length === 0) return;
-
     const newSlots: { weekday: number; start_time: string; end_time: string }[] = [];
     for (const day of WEEKDAYS) {
       if (day.value === wd) continue;
       const existing = new Set(byDay(day.value).map((s) => formatTime(s.start_time)));
       for (const t of source) {
-        if (!existing.has(t.start)) {
-          newSlots.push({ weekday: day.value, start_time: t.start, end_time: t.end });
-        }
+        if (!existing.has(t.start)) newSlots.push({ weekday: day.value, start_time: t.start, end_time: t.end });
       }
     }
-    if (newSlots.length === 0) {
-      toast.info("Во всех днях уже есть эти слоты");
-      return;
-    }
+    if (newSlots.length === 0) return toast.info("Во всех днях уже есть эти слоты");
     try {
       await apiPost("/api/slots", { slots: newSlots });
-      toast.success(`Скопировано в другие дни (${newSlots.length})`);
-      router.refresh();
+      toast.success(`Скопировано (${newSlots.length})`);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    }
+  }
+
+  async function bookingAction(id: string, action: "cancel" | "delete" | "unpair") {
+    if (action === "delete" && !confirm("Удалить запись безвозвратно?")) return;
+    try {
+      if (action === "unpair") await apiPost("/api/bookings/unpair", { booking_id: id });
+      else await apiPost("/api/bookings/action", { booking_id: id, action });
+      toast.success("Готово");
+      setActionsFor(null);
+      refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
     }
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex justify-end">
+    <div className="flex flex-col gap-5">
+      {/* Тулбар */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => setManualOpen(true)} className="gap-1.5">
+            <Plus className="size-4" /> Добавить запись
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setHistoryOpen(true)} className="gap-1.5">
+            <History className="size-4" /> История перемещений
+          </Button>
+        </div>
         <Link
           href="/dashboard/print"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium hover:bg-accent"
         >
           <Printer className="size-4" /> Печать недели
         </Link>
@@ -174,8 +216,7 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
           <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-32" />
         </div>
         <Button onClick={addSlot} disabled={busy} className="gap-2">
-          <Plus className="size-4" />
-          Добавить
+          <Plus className="size-4" /> Добавить слот
         </Button>
       </Card>
 
@@ -193,8 +234,7 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
                     title="Скопировать на все дни"
                     className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                   >
-                    <Copy className="size-3" />
-                    на все дни
+                    <Copy className="size-3" /> на все дни
                   </button>
                 )}
               </div>
@@ -208,43 +248,26 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
                       key={slot.id}
                       className={`group flex items-center justify-between rounded-md border px-2.5 py-1.5 text-sm ${STATUS_STYLE[statusKey(slot)]}`}
                     >
-                      <span className="tabular-nums">
-                        {formatRange(slot.start_time, slot.end_time)}
-                      </span>
+                      <span className="tabular-nums">{formatRange(slot.start_time, slot.end_time)}</span>
                       <span className="flex items-center gap-1.5">
                         {slot.booking ? (
-                          <span className="truncate text-xs">
-                            {[slot.booking.student_1, slot.booking.student_2, slot.booking.student_3]
-                              .filter(Boolean)
-                              .join(" + ")}
-                          </span>
-                        ) : slot.pendingCount > 0 ? (
-                          <span className="truncate text-xs">
-                            {slot.pendingCount}{" "}
-                            {plural(slot.pendingCount, "заявка", "заявки", "заявок")}
-                          </span>
+                          <button
+                            onClick={() => setActionsFor({ ...(slot.booking as Booking), slot })}
+                            className="truncate text-xs underline-offset-2 hover:underline"
+                            title="Действия с записью"
+                          >
+                            {bookingNames(slot.booking)}
+                          </button>
                         ) : null}
                         <span className="flex items-center opacity-40 transition-opacity group-hover:opacity-100">
-                          <button
-                            onClick={() => shiftSlot(slot, -30)}
-                            className="rounded p-0.5 hover:bg-foreground/10"
-                            title="Раньше на 30 мин"
-                          >
+                          <button onClick={() => shiftSlot(slot, -30)} className="rounded p-0.5 hover:bg-foreground/10" title="Раньше на 30 мин">
                             <ChevronUp className="size-3.5" />
                           </button>
-                          <button
-                            onClick={() => shiftSlot(slot, 30)}
-                            className="rounded p-0.5 hover:bg-foreground/10"
-                            title="Позже на 30 мин"
-                          >
+                          <button onClick={() => shiftSlot(slot, 30)} className="rounded p-0.5 hover:bg-foreground/10" title="Позже на 30 мин">
                             <ChevronDown className="size-3.5" />
                           </button>
                         </span>
-                        <button
-                          onClick={() => removeSlot(slot)}
-                          className="opacity-40 transition-opacity hover:opacity-100"
-                          title="Удалить слот"
-                        >
+                        <button onClick={() => removeSlot(slot)} className="opacity-40 transition-opacity hover:opacity-100" title="Удалить слот">
                           <Trash2 className="size-3.5" />
                         </button>
                       </span>
@@ -256,6 +279,99 @@ export function ScheduleTab({ slots }: { slots: SlotWithBooking[] }) {
           );
         })}
       </div>
+
+      {/* Действия с записью */}
+      <Dialog open={actionsFor !== null} onOpenChange={(o) => !o && setActionsFor(null)}>
+        <DialogContent>
+          {actionsFor && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{bookingNames(actionsFor)}</DialogTitle>
+                <DialogDescription>
+                  {weekdayLong(actionsFor.slot.weekday)}, {formatRange(actionsFor.slot.start_time, actionsFor.slot.end_time)}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button
+                  variant="outline"
+                  className="justify-start gap-2"
+                  onClick={() => {
+                    const b = actionsFor;
+                    setActionsFor(null);
+                    setMoveFor({ booking: b, mode: "move" });
+                  }}
+                >
+                  <CalendarClock className="size-4" /> Перенести
+                </Button>
+                {!actionsFor.partner2_student_id && (
+                  <Button
+                    variant="outline"
+                    className="justify-start gap-2"
+                    onClick={() => {
+                      const b = actionsFor;
+                      setActionsFor(null);
+                      setPairFor(b);
+                    }}
+                  >
+                    <Users className="size-4" /> {actionsFor.partner_student_id ? "Добавить третьего" : "Сделать парным"}
+                  </Button>
+                )}
+                {actionsFor.partner_student_id && (
+                  <Button variant="outline" className="justify-start gap-2" onClick={() => bookingAction(actionsFor.id, "unpair")}>
+                    <UserMinus className="size-4" /> Разъединить
+                  </Button>
+                )}
+                <Button variant="outline" className="justify-start gap-2" onClick={() => bookingAction(actionsFor.id, "cancel")}>
+                  <Unlock className="size-4" /> Освободить слот
+                </Button>
+                <Button variant="outline" className="justify-start gap-2 text-red-600" onClick={() => bookingAction(actionsFor.id, "delete")}>
+                  <Trash2 className="size-4" /> Удалить запись
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* История перемещений */}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>История перемещений</DialogTitle>
+            <DialogDescription>Переносы, освобождения и изменения записей.</DialogDescription>
+          </DialogHeader>
+          <HistoryTab history={history} />
+        </DialogContent>
+      </Dialog>
+
+      <ManualDialog
+        open={manualOpen}
+        students={students}
+        freeSlots={freeSlots}
+        onClose={() => setManualOpen(false)}
+        onDone={() => {
+          setManualOpen(false);
+          refresh();
+        }}
+      />
+      <MoveDialog
+        state={moveFor}
+        freeSlots={freeSlots}
+        onClose={() => setMoveFor(null)}
+        onDone={() => {
+          setMoveFor(null);
+          refresh();
+        }}
+      />
+      <PairDialog
+        booking={pairFor}
+        students={students}
+        onClose={() => setPairFor(null)}
+        onDone={() => {
+          setPairFor(null);
+          refresh();
+        }}
+      />
     </div>
   );
 }

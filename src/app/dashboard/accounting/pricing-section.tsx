@@ -166,6 +166,7 @@ function SlotPriceCard({
           key={p.student_id}
           name={p.name}
           price={p.price_kopecks}
+          source={p.source}
           onSave={(kop) =>
             onMutate({ action: "upsert", slot_id: slot.id, student_id: p.student_id, price_kopecks: kop })
           }
@@ -212,11 +213,13 @@ function SlotPriceCard({
 function PayerRow({
   name,
   price,
+  source,
   onSave,
   onRemove,
 }: {
   name: string;
   price: number;
+  source: "schedule" | "extra";
   onSave: (kop: number) => Promise<void>;
   onRemove: () => Promise<void>;
 }) {
@@ -245,7 +248,12 @@ function PayerRow({
       <Button size="icon-sm" variant={changed ? "default" : "ghost"} disabled={!changed || busy} onClick={save} title="Сохранить">
         <Check className="size-4" />
       </Button>
-      <Button size="icon-sm" variant="ghost" onClick={onRemove} title="Убрать плательщика">
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        onClick={onRemove}
+        title={source === "extra" ? "Убрать плательщика" : "Сбросить цену к дефолтной"}
+      >
         <X className="size-4" />
       </Button>
     </div>

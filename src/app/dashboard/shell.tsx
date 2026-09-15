@@ -6,48 +6,35 @@ import {
   BookOpen,
   CalendarDays,
   GraduationCap,
-  History,
-  Inbox,
   LogOut,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Sparkles,
   Users,
   Wallet,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { SlotWithBooking } from "@/lib/domain";
+import type { Slot, SlotWithBooking } from "@/lib/domain";
 import type { BookingEvent, BookingWithSlot, StudentOverview } from "@/lib/queries";
 import { apiSend } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { BookingLinkCard } from "./booking-link-card";
 import { ScheduleTab } from "./schedule-tab";
-import { RequestsTab } from "./requests-tab";
 import { StudentsTab } from "./students-tab";
-import { HistoryTab } from "./history-tab";
 import { AccountingTab } from "./accounting-tab";
 import { HomeworkTab } from "./homework-tab";
 import { AssistantTab } from "./assistant-tab";
+import type { StudentOption } from "./booking-dialogs";
 
-export type StudentOption = { id: string; name: string };
-
-type ViewKey =
-  | "schedule"
-  | "requests"
-  | "students"
-  | "accounting"
-  | "homework"
-  | "history"
-  | "assistant";
+type ViewKey = "assistant" | "schedule" | "accounting" | "homework" | "students";
 
 interface NavItem {
   key: ViewKey;
   label: string;
   icon: LucideIcon;
-  badge?: number;
 }
 
 interface Props {
@@ -60,39 +47,32 @@ interface Props {
 }
 
 const VIEW_TITLES: Record<ViewKey, string> = {
+  assistant: "ИИ-ассистент",
   schedule: "Расписание",
-  requests: "Заявки",
-  students: "Ученики",
   accounting: "Бухгалтерия",
   homework: "Домашние задания",
-  history: "История",
-  assistant: "ИИ-ассистент",
+  students: "Ученики",
 };
 
-export function DashboardShell({ slots, bookings, bookingUrl, unseen, overview, history }: Props) {
+const NAV: NavItem[] = [
+  { key: "assistant", label: "ИИ-ассистент", icon: Sparkles },
+  { key: "schedule", label: "Расписание", icon: CalendarDays },
+  { key: "accounting", label: "Бухгалтерия", icon: Wallet },
+  { key: "homework", label: "Домашние задания", icon: BookOpen },
+  { key: "students", label: "Ученики", icon: Users },
+];
+
+export function DashboardShell({ slots, overview, history }: Props) {
   const router = useRouter();
   const [active, setActive] = useState<ViewKey>("schedule");
   const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
-  const freeSlots = useMemo(
-    () => slots.filter((s) => s.is_active && !s.booking),
-    [slots],
-  );
-  const pendingCount = bookings.filter((b) => b.status === "pending").length;
+  const freeSlots = useMemo(() => slots.filter((s) => s.is_active && !s.booking) as Slot[], [slots]);
   const studentOptions: StudentOption[] = useMemo(
     () => overview.map((s) => ({ id: s.id, name: s.name })),
     [overview],
   );
-
-  const nav: NavItem[] = [
-    { key: "schedule", label: "Расписание", icon: CalendarDays },
-    { key: "requests", label: "Заявки", icon: Inbox, badge: pendingCount },
-    { key: "students", label: "Ученики", icon: Users },
-    { key: "accounting", label: "Бухгалтерия", icon: Wallet },
-    { key: "homework", label: "Домашние задания", icon: BookOpen },
-    { key: "history", label: "История", icon: History },
-    { key: "assistant", label: "ИИ-ассистент", icon: Sparkles },
-  ];
 
   async function logout() {
     await apiSend("/api/logout", "POST").catch(() => {});
@@ -103,22 +83,20 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen, overview, 
   function select(key: ViewKey) {
     setActive(key);
     setNavOpen(false);
-    // Открытие заявок помечает новые просмотренными.
-    if (key === "requests" && unseen > 0) {
-      apiSend("/api/notifications/seen", "POST").catch(() => {});
-    }
   }
 
-  const sidebar = (
+  const sidebar = (full: boolean) => (
     <div className="flex h-full flex-col gap-1 bg-sidebar p-3">
-      <div className="flex items-center gap-3 px-2 py-3">
+      <div className={cn("flex items-center gap-3 px-1 py-3", !full && "justify-center px-0")}>
         <span className="brand-badge size-10 shrink-0">
           <GraduationCap className="size-5" />
         </span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold leading-tight">Расписание уроков</p>
-          <p className="truncate text-xs text-muted-foreground">Панель преподавателя</p>
-        </div>
+        {full && (
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold leading-tight">Расписание уроков</p>
+            <p className="truncate text-xs text-muted-foreground">Панель преподавателя</p>
+          </div>
+        )}
         <button
           onClick={() => setNavOpen(false)}
           className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-foreground/10 lg:hidden"
@@ -129,65 +107,65 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen, overview, 
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5">
-        {nav.map((item) => {
+        {NAV.map((item) => {
           const Icon = item.icon;
           const isActive = active === item.key;
           return (
             <button
               key={item.key}
               onClick={() => select(item.key)}
+              title={item.label}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                !full && "justify-center px-0",
                 isActive
                   ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
                   : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
             >
               <Icon className="size-4 shrink-0" />
-              <span className="flex-1 text-left">{item.label}</span>
-              {item.badge && item.badge > 0 ? (
-                <Badge
-                  variant={isActive ? "secondary" : "default"}
-                  className="rounded-full px-1.5"
-                >
-                  {item.badge}
-                </Badge>
-              ) : null}
+              {full && <span className="flex-1 text-left">{item.label}</span>}
             </button>
           );
         })}
       </nav>
 
-      <Button variant="ghost" onClick={logout} className="justify-start gap-3 text-muted-foreground">
+      <Button
+        variant="ghost"
+        onClick={logout}
+        title="Выйти"
+        className={cn("gap-3 text-muted-foreground", full ? "justify-start" : "justify-center px-0")}
+      >
         <LogOut className="size-4" />
-        Выйти
+        {full && "Выйти"}
       </Button>
     </div>
   );
 
   return (
     <div className="flex min-h-screen flex-1">
-      <AutoRefresh seconds={12} />
+      <AutoRefresh seconds={20} />
 
-      {/* Сайдбар — рабочая зона (desktop) */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-sidebar-border lg:block">
-        {sidebar}
+      {/* Сайдбар (desktop) */}
+      <aside
+        className={cn(
+          "sticky top-0 hidden h-screen shrink-0 border-r border-sidebar-border lg:block",
+          collapsed ? "w-16" : "w-64",
+        )}
+      >
+        {sidebar(!collapsed)}
       </aside>
 
-      {/* Мобильное меню (overlay) */}
+      {/* Мобильное меню */}
       {navOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setNavOpen(false)}
-          />
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setNavOpen(false)} />
           <div className="absolute inset-y-0 left-0 w-64 border-r border-sidebar-border shadow-xl">
-            {sidebar}
+            {sidebar(true)}
           </div>
         </div>
       )}
 
-      {/* Контент */}
       <main className="flex-1 px-4 py-4 sm:px-6 sm:py-6">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
           <div className="flex items-center gap-3">
@@ -198,25 +176,29 @@ export function DashboardShell({ slots, bookings, bookingUrl, unseen, overview, 
             >
               <Menu className="size-5" />
             </button>
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">
-              {VIEW_TITLES[active]}
-            </h1>
+            <button
+              onClick={() => setCollapsed((v) => !v)}
+              className="hidden rounded-md p-2 text-muted-foreground hover:bg-foreground/10 lg:block"
+              title={collapsed ? "Развернуть меню" : "Свернуть меню"}
+            >
+              {collapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
+            </button>
+            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{VIEW_TITLES[active]}</h1>
           </div>
 
-          {(active === "schedule" || active === "requests") && (
-            <BookingLinkCard bookingUrl={bookingUrl} />
-          )}
-
           <div>
-            {active === "schedule" && <ScheduleTab slots={slots} />}
-            {active === "requests" && (
-              <RequestsTab bookings={bookings} freeSlots={freeSlots} students={studentOptions} />
+            {active === "assistant" && <AssistantTab />}
+            {active === "schedule" && (
+              <ScheduleTab
+                slots={slots}
+                freeSlots={freeSlots}
+                students={studentOptions}
+                history={history}
+              />
             )}
-            {active === "students" && <StudentsTab overview={overview} />}
             {active === "accounting" && <AccountingTab />}
             {active === "homework" && <HomeworkTab />}
-            {active === "history" && <HistoryTab history={history} />}
-            {active === "assistant" && <AssistantTab />}
+            {active === "students" && <StudentsTab overview={overview} />}
           </div>
         </div>
       </main>

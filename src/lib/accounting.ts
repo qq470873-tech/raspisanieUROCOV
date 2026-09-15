@@ -3,7 +3,7 @@ import { supabaseAdmin } from "./supabase";
 import type { Slot } from "./domain";
 import { timeToMinutes } from "./domain";
 import { registerStudents } from "./queries";
-import { dateForWeekdayThisWeek, todayNN, weekdayDatesInRange } from "./time-nn";
+import { addDays, mondayOf, todayNN, weekdayDatesInRange } from "./time-nn";
 
 export interface LessonPayer {
   id: string;
@@ -28,14 +28,17 @@ export interface LessonException {
   date: string; // YYYY-MM-DD
 }
 
+/** Начало учебного «сезона» — с этой недели можно листать денежное расписание. */
+export const SEASON_START = "2026-09-01";
+
 /** Сводка по счёту ученика (модель «баланс»). */
 export interface StudentBalance {
   studentId: string;
   name: string;
-  creditedKopecks: number; // всего оплачено
-  consumedKopecks: number; // списано за прошедшие занятия
-  balanceKopecks: number; // остаток (может быть отрицательным = долг)
-  weeklyBurnKopecks: number; // стоимость всех занятий ученика за неделю
+  creditedKopecks: number;
+  consumedKopecks: number;
+  balanceKopecks: number;
+  weeklyBurnKopecks: number;
   lessonsPerWeek: number;
   anchorDate: string;
 }
@@ -46,12 +49,96 @@ async function selectAll<T>(table: string): Promise<T[]> {
   return (data ?? []) as T[];
 }
 
+// ── Плательщики из расписания ──────────────────────────────────────────────────
+// Плательщики берутся из подтверждённых броней (реальное расписание), а
+// lesson_payers хранит только переопределения цены и дополнительных плательщиков.
+
+interface FlatPayer {
+  slot: Slot;
+  student_id: string;
+  name: string;
+  price_kopecks: number;
+  source: "schedule" | "extra";
+}
+
+interface ConfirmedBooking {
+  slot_id: string;
+  student_id: string | null;
+  partner_student_id: string | null;
+  partner2_student_id: string | null;
+}
+
+async function getFlatPayers(): Promise<{
+  flat: FlatPayer[];
+  activeSlots: Slot[];
+  students: { id: string; name: string }[];
+  defaultPriceKopecks: number;
+}> {
+  const db = supabaseAdmin();
+  const [slots, overrides, students, settings, bookings] = await Promise.all([
+    selectAll<Slot>("slots"),
+    selectAll<LessonPayer>("lesson_payers"),
+    db.from("students").select("id, name").then((r) => (r.data ?? []) as { id: string; name: string }[]),
+    db.from("settings").select("default_price_kopecks").eq("id", 1).maybeSingle(),
+    db
+      .from("bookings")
+      .select("slot_id, student_id, partner_student_id, partner2_student_id")
+      .eq("status", "confirmed")
+      .then((r) => (r.data ?? []) as ConfirmedBooking[]),
+  ]);
+
+  const defaultPrice =
+    (settings.data as { default_price_kopecks: number } | null)?.default_price_kopecks ?? 0;
+  const nameMap = new Map(students.map((s) => [s.id, s.name]));
+  const priceMap = new Map(overrides.map((o) => [`${o.slot_id}|${o.student_id}`, o.price_kopecks]));
+  const activeSlots = slots
+    .filter((s) => s.is_active)
+    .sort((a, b) => a.weekday - b.weekday || timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
+
+  const flat: FlatPayer[] = [];
+  for (const slot of activeSlots) {
+    const seen = new Set<string>();
+    const price = (studentId: string) =>
+      priceMap.get(`${slot.id}|${studentId}`) ?? defaultPrice;
+
+    // Участники подтверждённых броней на этом слоте.
+    for (const b of bookings.filter((x) => x.slot_id === slot.id)) {
+      for (const id of [b.student_id, b.partner_student_id, b.partner2_student_id]) {
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        flat.push({
+          slot,
+          student_id: id,
+          name: nameMap.get(id) ?? "—",
+          price_kopecks: price(id),
+          source: "schedule",
+        });
+      }
+    }
+    // Дополнительные плательщики (не участники брони).
+    for (const o of overrides.filter((x) => x.slot_id === slot.id)) {
+      if (seen.has(o.student_id)) continue;
+      seen.add(o.student_id);
+      flat.push({
+        slot,
+        student_id: o.student_id,
+        name: nameMap.get(o.student_id) ?? "—",
+        price_kopecks: o.price_kopecks,
+        source: "extra",
+      });
+    }
+  }
+
+  return { flat, activeSlots, students, defaultPriceKopecks: defaultPrice };
+}
+
 // ── Настройка стоимости (раздел 3) ─────────────────────────────────────────────
 
 export interface SlotPayerView {
   student_id: string;
   name: string;
   price_kopecks: number;
+  source: "schedule" | "extra";
 }
 
 export interface SlotPricing {
@@ -69,44 +156,37 @@ export interface PricingData {
   slots: SlotPricing[];
 }
 
-/** Данные для раздела «Настройка стоимости»: слоты с плательщиками + список учеников. */
 export async function getPricingData(): Promise<PricingData> {
-  const db = supabaseAdmin();
-  const [slots, payers, students, settings] = await Promise.all([
-    selectAll<Slot>("slots"),
-    selectAll<LessonPayer>("lesson_payers"),
-    db.from("students").select("id, name").then((r) => (r.data ?? []) as { id: string; name: string }[]),
-    db.from("settings").select("default_price_kopecks").eq("id", 1).maybeSingle(),
-  ]);
-
-  const nameMap = new Map(students.map((s) => [s.id, s.name]));
-  const slotSorted = [...slots].sort(
-    (a, b) => a.weekday - b.weekday || timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
-  );
+  const { flat, activeSlots, students, defaultPriceKopecks } = await getFlatPayers();
+  const bySlot = new Map<string, FlatPayer[]>();
+  for (const p of flat) {
+    const arr = bySlot.get(p.slot.id) ?? [];
+    arr.push(p);
+    bySlot.set(p.slot.id, arr);
+  }
 
   return {
-    defaultPriceKopecks:
-      (settings.data as { default_price_kopecks: number } | null)?.default_price_kopecks ?? 0,
+    defaultPriceKopecks,
     students: [...students].sort((a, b) => a.name.localeCompare(b.name, "ru")),
-    slots: slotSorted.map((s) => ({
+    slots: activeSlots.map((s) => ({
       id: s.id,
       weekday: s.weekday,
       start_time: s.start_time,
       end_time: s.end_time,
       is_active: s.is_active,
-      payers: payers
-        .filter((p) => p.slot_id === s.id)
+      payers: (bySlot.get(s.id) ?? [])
         .map((p) => ({
           student_id: p.student_id,
-          name: nameMap.get(p.student_id) ?? "—",
+          name: p.name,
           price_kopecks: p.price_kopecks,
+          source: p.source,
         }))
         .sort((a, b) => a.name.localeCompare(b.name, "ru")),
     })),
   };
 }
 
-/** Добавляет/обновляет плательщика на слоте (по ученику из базы). */
+/** Задаёт/обновляет цену плательщика на слоте (переопределение). */
 export async function upsertPayer(
   slotId: string,
   studentId: string,
@@ -123,7 +203,7 @@ export async function upsertPayer(
   await ensureBilling(studentId);
 }
 
-/** Добавляет плательщика по имени (создаёт ученика при необходимости). */
+/** Добавляет доп. плательщика по имени (создаёт ученика при необходимости). */
 export async function addPayerByName(
   slotId: string,
   name: string,
@@ -135,7 +215,7 @@ export async function addPayerByName(
   await upsertPayer(slotId, student.id, priceKopecks);
 }
 
-/** Убирает плательщика со слота. */
+/** Убирает переопределение/доп. плательщика со слота (участник брони останется по дефолтной цене). */
 export async function removePayer(slotId: string, studentId: string): Promise<void> {
   const db = supabaseAdmin();
   const { error } = await db
@@ -148,9 +228,7 @@ export async function removePayer(slotId: string, studentId: string): Promise<vo
 
 export async function setDefaultPrice(priceKopecks: number): Promise<void> {
   const db = supabaseAdmin();
-  const { error } = await db
-    .from("settings")
-    .upsert({ id: 1, default_price_kopecks: priceKopecks });
+  const { error } = await db.from("settings").upsert({ id: 1, default_price_kopecks: priceKopecks });
   if (error) throw new Error(error.message);
 }
 
@@ -162,15 +240,83 @@ export async function ensureBilling(studentId: string): Promise<void> {
     .upsert({ student_id: studentId }, { onConflict: "student_id", ignoreDuplicates: true });
 }
 
+// ── Баланс (модель А), с расчётом «на дату» ────────────────────────────────────
+
+/**
+ * Баланс каждого ученика на дату asOf (по умолчанию — сегодня по НН).
+ * consumed = Σ (прошедшие занятия слота между anchor и asOf − отменённые) × цена.
+ * credited = Σ платежей с paid_at ≤ asOf. balance = credited − consumed.
+ */
+export async function getStudentBalances(asOf: string = todayNN()): Promise<StudentBalance[]> {
+  const [{ flat, students }, payments, exceptions, billing] = await Promise.all([
+    getFlatPayers(),
+    selectAll<Payment>("payments"),
+    selectAll<LessonException>("lesson_exceptions"),
+    selectAll<{ student_id: string; anchor_date: string }>("student_billing"),
+  ]);
+
+  const nameMap = new Map(students.map((s) => [s.id, s.name]));
+  const anchorMap = new Map(billing.map((b) => [b.student_id, b.anchor_date]));
+
+  const credited = new Map<string, number>();
+  for (const p of payments) {
+    if (p.paid_at <= asOf) credited.set(p.student_id, (credited.get(p.student_id) ?? 0) + p.amount_kopecks);
+  }
+
+  const byStudent = new Map<string, FlatPayer[]>();
+  for (const p of flat) {
+    const arr = byStudent.get(p.student_id) ?? [];
+    arr.push(p);
+    byStudent.set(p.student_id, arr);
+  }
+
+  const studentIds = new Set<string>([...byStudent.keys(), ...credited.keys()]);
+  const result: StudentBalance[] = [];
+
+  for (const studentId of studentIds) {
+    const anchor = anchorMap.get(studentId) ?? todayNN();
+    const myPayers = byStudent.get(studentId) ?? [];
+
+    let consumed = 0;
+    let weeklyBurn = 0;
+    for (const payer of myPayers) {
+      weeklyBurn += payer.price_kopecks;
+      const dates = weekdayDatesInRange(anchor, asOf, payer.slot.weekday);
+      const skips = new Set(
+        exceptions
+          .filter(
+            (e) =>
+              e.slot_id === payer.slot.id && (e.student_id === null || e.student_id === studentId),
+          )
+          .map((e) => e.date),
+      );
+      consumed += dates.filter((d) => !skips.has(d)).length * payer.price_kopecks;
+    }
+
+    const creditedK = credited.get(studentId) ?? 0;
+    result.push({
+      studentId,
+      name: nameMap.get(studentId) ?? "—",
+      creditedKopecks: creditedK,
+      consumedKopecks: consumed,
+      balanceKopecks: creditedK - consumed,
+      weeklyBurnKopecks: weeklyBurn,
+      lessonsPerWeek: myPayers.length,
+      anchorDate: anchor,
+    });
+  }
+
+  return result.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+}
+
 // ── Оплата занятий (раздел 2) ──────────────────────────────────────────────────
 
 export interface PaymentsStudent extends StudentBalance {
-  perLessonKopecks: number; // средняя цена одного занятия
-  lessonsLeft: number | null; // осталось занятий (null, если цена не задана)
-  payments: Payment[]; // история платежей (свежие сверху)
+  perLessonKopecks: number;
+  lessonsLeft: number | null;
+  payments: Payment[];
 }
 
-/** Данные для раздела «Оплата занятий»: балансы + история платежей по каждому ученику. */
 export async function getPaymentsOverview(): Promise<{ students: PaymentsStudent[] }> {
   const [balances, payments] = await Promise.all([
     getStudentBalances(),
@@ -185,8 +331,7 @@ export async function getPaymentsOverview(): Promise<{ students: PaymentsStudent
   }
 
   const students = balances.map((b) => {
-    const perLesson =
-      b.lessonsPerWeek > 0 ? Math.round(b.weeklyBurnKopecks / b.lessonsPerWeek) : 0;
+    const perLesson = b.lessonsPerWeek > 0 ? Math.round(b.weeklyBurnKopecks / b.lessonsPerWeek) : 0;
     const list = (byStudent.get(b.studentId) ?? []).sort((a, c) =>
       c.paid_at === a.paid_at ? c.created_at.localeCompare(a.created_at) : c.paid_at.localeCompare(a.paid_at),
     );
@@ -229,10 +374,51 @@ export async function setAnchor(studentId: string, date: string): Promise<void> 
   if (error) throw new Error(error.message);
 }
 
-/**
- * «Выставить остаток вручную»: добавляет корректирующий платёж так, чтобы текущий
- * баланс ученика стал равен targetKopecks.
- */
+/** Полная история изменений баланса ученика: платежи (+) и списания за занятия (−). */
+export interface LedgerEntry {
+  date: string;
+  label: string;
+  amountKopecks: number; // + пополнение, − списание
+}
+
+export async function getStudentLedger(studentId: string): Promise<LedgerEntry[]> {
+  const [{ flat }, payments, exceptions, billing] = await Promise.all([
+    getFlatPayers(),
+    selectAll<Payment>("payments"),
+    selectAll<LessonException>("lesson_exceptions"),
+    selectAll<{ student_id: string; anchor_date: string }>("student_billing"),
+  ]);
+
+  const today = todayNN();
+  const anchor = billing.find((b) => b.student_id === studentId)?.anchor_date ?? today;
+  const entries: LedgerEntry[] = [];
+
+  // Пополнения / корректировки.
+  for (const p of payments.filter((x) => x.student_id === studentId)) {
+    entries.push({ date: p.paid_at, label: p.note || "Оплата", amountKopecks: p.amount_kopecks });
+  }
+
+  // Списания за прошедшие занятия.
+  for (const payer of flat.filter((x) => x.student_id === studentId)) {
+    const skips = new Set(
+      exceptions
+        .filter((e) => e.slot_id === payer.slot.id && (e.student_id === null || e.student_id === studentId))
+        .map((e) => e.date),
+    );
+    for (const d of weekdayDatesInRange(anchor, today, payer.slot.weekday)) {
+      if (skips.has(d)) continue;
+      entries.push({
+        date: d,
+        label: `Занятие ${payer.slot.start_time.slice(0, 5)}`,
+        amountKopecks: -payer.price_kopecks,
+      });
+    }
+  }
+
+  // Свежие сверху.
+  return entries.sort((a, b) => (a.date === b.date ? 0 : b.date.localeCompare(a.date)));
+}
+
 export async function setBalanceManual(studentId: string, targetKopecks: number): Promise<void> {
   const balances = await getStudentBalances();
   const cur = balances.find((b) => b.studentId === studentId)?.balanceKopecks ?? 0;
@@ -241,14 +427,14 @@ export async function setBalanceManual(studentId: string, targetKopecks: number)
   await addPayment(studentId, delta, todayNN(), "Ручная корректировка остатка");
 }
 
-// ── Денежное расписание (раздел 1) ─────────────────────────────────────────────
+// ── Денежное расписание (раздел 1) — по неделям ────────────────────────────────
 
 export interface MoneyPayer {
   student_id: string;
   name: string;
   price_kopecks: number;
   balanceKopecks: number;
-  status: "paid" | "debt"; // хватает ли баланса на это занятие
+  status: "paid" | "debt";
 }
 
 export interface MoneySlot {
@@ -256,28 +442,43 @@ export interface MoneySlot {
   weekday: number;
   start_time: string;
   end_time: string;
+  date: string; // дата этого занятия в выбранной неделе
+  skipped: boolean; // «урока не было» на эту дату
   payers: MoneyPayer[];
-  exceptions: string[]; // даты, когда «урока не было» (для всего слота)
-  thisWeekDate: string; // дата этого дня недели в текущей неделе
 }
 
-/** Данные для «Денежного расписания»: активные слоты + статус оплаты каждого плательщика. */
-export async function getMoneySchedule(): Promise<{ slots: MoneySlot[] }> {
-  const [pricing, balances, exceptions] = await Promise.all([
-    getPricingData(),
-    getStudentBalances(),
+export interface MoneyScheduleData {
+  weekMonday: string;
+  slots: MoneySlot[];
+  seasonStartMonday: string;
+}
+
+/** Денежное расписание на неделю (Пн = weekMonday). Баланс — на конец этой недели. */
+export async function getMoneySchedule(weekMonday: string): Promise<MoneyScheduleData> {
+  const asOf = addDays(weekMonday, 6);
+  const [{ flat, activeSlots }, balances, exceptions] = await Promise.all([
+    getFlatPayers(),
+    getStudentBalances(asOf),
     selectAll<LessonException>("lesson_exceptions"),
   ]);
   const balMap = new Map(balances.map((b) => [b.studentId, b.balanceKopecks]));
+  const bySlot = new Map<string, FlatPayer[]>();
+  for (const p of flat) {
+    const arr = bySlot.get(p.slot.id) ?? [];
+    arr.push(p);
+    bySlot.set(p.slot.id, arr);
+  }
 
-  const slots = pricing.slots
-    .filter((s) => s.is_active)
-    .map((s) => ({
+  const slots: MoneySlot[] = activeSlots.map((s) => {
+    const date = addDays(weekMonday, s.weekday - 1);
+    return {
       id: s.id,
       weekday: s.weekday,
       start_time: s.start_time,
       end_time: s.end_time,
-      payers: s.payers.map((p) => {
+      date,
+      skipped: exceptions.some((e) => e.slot_id === s.id && e.student_id === null && e.date === date),
+      payers: (bySlot.get(s.id) ?? []).map((p) => {
         const bal = balMap.get(p.student_id) ?? 0;
         return {
           student_id: p.student_id,
@@ -287,109 +488,20 @@ export async function getMoneySchedule(): Promise<{ slots: MoneySlot[] }> {
           status: (bal >= p.price_kopecks ? "paid" : "debt") as "paid" | "debt",
         };
       }),
-      exceptions: exceptions
-        .filter((e) => e.slot_id === s.id && e.student_id === null)
-        .map((e) => e.date)
-        .sort(),
-      thisWeekDate: dateForWeekdayThisWeek(s.weekday),
-    }));
+    };
+  });
 
-  return { slots };
+  return { weekMonday, slots, seasonStartMonday: mondayOf(SEASON_START) };
 }
 
-/** Отмечает/снимает «урока не было» для всего слота на конкретную дату (идемпотентно). */
+/** Отмечает/снимает «урока не было» для всего слота на дату (идемпотентно). */
 export async function setException(slotId: string, date: string, on: boolean): Promise<void> {
   const db = supabaseAdmin();
-  await db
-    .from("lesson_exceptions")
-    .delete()
-    .eq("slot_id", slotId)
-    .eq("date", date)
-    .is("student_id", null);
+  await db.from("lesson_exceptions").delete().eq("slot_id", slotId).eq("date", date).is("student_id", null);
   if (on) {
     const { error } = await db
       .from("lesson_exceptions")
       .insert({ slot_id: slotId, date, student_id: null });
     if (error) throw new Error(error.message);
   }
-}
-
-/**
- * Считает баланс каждого ученика, у которого есть строки в lesson_payers.
- * consumed = Σ (прошедшие занятия слота между anchor и сегодня − отменённые) × цена.
- * balance = Σ платежей − consumed. Всё в копейках.
- */
-export async function getStudentBalances(): Promise<StudentBalance[]> {
-  const db = supabaseAdmin();
-  const today = todayNN();
-
-  const [payers, payments, exceptions, slots, students, billing] = await Promise.all([
-    selectAll<LessonPayer>("lesson_payers"),
-    selectAll<Payment>("payments"),
-    selectAll<LessonException>("lesson_exceptions"),
-    selectAll<Slot>("slots"),
-    db.from("students").select("id, name").then((r) => (r.data ?? []) as { id: string; name: string }[]),
-    selectAll<{ student_id: string; anchor_date: string }>("student_billing"),
-  ]);
-
-  const slotMap = new Map(slots.map((s) => [s.id, s]));
-  const nameMap = new Map(students.map((s) => [s.id, s.name]));
-  const anchorMap = new Map(billing.map((b) => [b.student_id, b.anchor_date]));
-
-  // Кредиты по ученикам.
-  const credited = new Map<string, number>();
-  for (const p of payments) {
-    credited.set(p.student_id, (credited.get(p.student_id) ?? 0) + p.amount_kopecks);
-  }
-
-  // Плательщики, сгруппированные по ученику.
-  const byStudent = new Map<string, LessonPayer[]>();
-  for (const p of payers) {
-    const arr = byStudent.get(p.student_id) ?? [];
-    arr.push(p);
-    byStudent.set(p.student_id, arr);
-  }
-
-  const studentIds = new Set<string>([...byStudent.keys(), ...credited.keys()]);
-  const result: StudentBalance[] = [];
-
-  for (const studentId of studentIds) {
-    const anchor = anchorMap.get(studentId) ?? today;
-    const myPayers = byStudent.get(studentId) ?? [];
-
-    let consumed = 0;
-    let weeklyBurn = 0;
-    for (const payer of myPayers) {
-      const slot = slotMap.get(payer.slot_id);
-      if (!slot) continue;
-      weeklyBurn += payer.price_kopecks;
-
-      const dates = weekdayDatesInRange(anchor, today, slot.weekday);
-      const skips = new Set(
-        exceptions
-          .filter(
-            (e) =>
-              e.slot_id === payer.slot_id &&
-              (e.student_id === null || e.student_id === studentId),
-          )
-          .map((e) => e.date),
-      );
-      const occurred = dates.filter((d) => !skips.has(d)).length;
-      consumed += occurred * payer.price_kopecks;
-    }
-
-    const creditedK = credited.get(studentId) ?? 0;
-    result.push({
-      studentId,
-      name: nameMap.get(studentId) ?? "—",
-      creditedKopecks: creditedK,
-      consumedKopecks: consumed,
-      balanceKopecks: creditedK - consumed,
-      weeklyBurnKopecks: weeklyBurn,
-      lessonsPerWeek: myPayers.length,
-      anchorDate: anchor,
-    });
-  }
-
-  return result.sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }

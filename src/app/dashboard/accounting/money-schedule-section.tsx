@@ -2,15 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CalendarOff, RotateCcw } from "lucide-react";
+import { CalendarOff, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { WEEKDAYS, formatRange } from "@/lib/domain";
-import { formatDayMonth, formatMoney } from "@/lib/time-nn";
+import { addDays, currentWeekMonday, formatDayMonth, formatMoney } from "@/lib/time-nn";
 import type { MoneySlot } from "@/lib/accounting";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 type SlotState = "paid" | "partial" | "debt" | "none";
 
@@ -30,66 +29,112 @@ const BORDER: Record<SlotState, string> = {
 };
 
 export function MoneyScheduleSection() {
+  const [week, setWeek] = useState(() => currentWeekMonday());
   const [slots, setSlots] = useState<MoneySlot[]>([]);
+  const [seasonStart, setSeasonStart] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadToken, setReloadToken] = useState(0);
 
-  async function load() {
-    try {
-      const res = await fetch("/api/accounting/schedule");
-      if (!res.ok) throw new Error("Не удалось загрузить");
-      setSlots((await res.json()).slots);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка");
-    } finally {
-      setLoading(false);
-    }
-  }
   useEffect(() => {
-    load();
-  }, []);
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/accounting/schedule?week=${week}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Не удалось загрузить"))))
+      .then((data) => {
+        if (cancelled) return;
+        setSlots(data.slots);
+        setSeasonStart(data.seasonStartMonday);
+      })
+      .catch((e) => !cancelled && toast.error(e instanceof Error ? e.message : "Ошибка"))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [week, reloadToken]);
 
   async function toggleException(slotId: string, date: string, on: boolean) {
     await apiPost("/api/accounting/schedule", { slot_id: slotId, date, on });
-    await load();
+    setReloadToken((t) => t + 1);
   }
 
-  if (loading) return <Card className="p-8 text-center text-muted-foreground">Загрузка…</Card>;
-
-  if (slots.length === 0) {
-    return <Card className="p-8 text-center text-muted-foreground">Нет активных занятий.</Card>;
-  }
+  const weekEnd = addDays(week, 6);
+  const maxWeek = seasonStart ? addDays(seasonStart, 51 * 7) : week;
+  const canPrev = !seasonStart || week > seasonStart;
+  const canNext = week < maxWeek;
+  const isCurrent = week === currentWeekMonday();
 
   return (
     <div className="flex flex-col gap-4">
-      <Legend />
-      {WEEKDAYS.map((day) => {
-        const daySlots = slots.filter((s) => s.weekday === day.value);
-        if (daySlots.length === 0) return null;
-        return (
-          <div key={day.value} className="flex flex-col gap-2">
-            <h3 className="px-1 text-sm font-semibold text-muted-foreground">{day.long}</h3>
-            {daySlots.map((slot) => (
-              <SlotCard key={slot.id} slot={slot} onToggle={toggleException} />
-            ))}
-          </div>
-        );
-      })}
+      {/* Навигация по неделям */}
+      <Card className="flex flex-wrap items-center justify-between gap-2 p-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={!canPrev}
+            onClick={() => setWeek(addDays(week, -7))}
+            title="Предыдущая неделя"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <span className="min-w-40 text-center text-sm font-semibold tabular-nums">
+            {formatDayMonth(week)} — {formatDayMonth(weekEnd)}
+            {isCurrent && <span className="ml-1 text-primary">· сейчас</span>}
+          </span>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={!canNext}
+            onClick={() => setWeek(addDays(week, 7))}
+            title="Следующая неделя"
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+        {!isCurrent && (
+          <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setWeek(currentWeekMonday())}>
+            <RotateCcw className="size-3.5" /> К текущей неделе
+          </Button>
+        )}
+        <Legend />
+      </Card>
+
+      {loading && slots.length === 0 ? (
+        <Card className="p-8 text-center text-muted-foreground">Загрузка…</Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {WEEKDAYS.map((day) => {
+            const daySlots = slots.filter((s) => s.weekday === day.value);
+            if (daySlots.length === 0) return null;
+            return (
+              <div key={day.value} className="flex flex-col gap-2">
+                <h3 className="px-1 text-sm font-semibold text-muted-foreground">
+                  {day.short} · {daySlots[0] ? formatDayMonth(daySlots[0].date) : ""}
+                </h3>
+                {daySlots.map((slot) => (
+                  <SlotCard key={slot.id} slot={slot} onToggle={toggleException} />
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 function Legend() {
   const item = (cls: string, label: string) => (
-    <span className="flex items-center gap-1.5">
-      <span className={cn("size-3 rounded-full", cls)} /> {label}
+    <span className="flex items-center gap-1">
+      <span className={cn("size-2.5 rounded-full", cls)} /> {label}
     </span>
   );
   return (
-    <Card className="flex flex-wrap gap-x-4 gap-y-2 p-3 text-xs text-muted-foreground">
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
       {item("bg-emerald-500", "оплачено")}
-      {item("bg-red-500", "долг / не указано")}
-      {item("bg-gradient-to-r from-red-500 to-sky-500", "частично (в группе)")}
-    </Card>
+      {item("bg-red-500", "долг")}
+      {item("bg-gradient-to-r from-red-500 to-sky-500", "частично")}
+    </div>
   );
 }
 
@@ -100,89 +145,54 @@ function SlotCard({
   slot: MoneySlot;
   onToggle: (slotId: string, date: string, on: boolean) => Promise<void>;
 }) {
-  const [customDate, setCustomDate] = useState(slot.thisWeekDate);
   const state = slotState(slot);
-  const thisWeekSkipped = slot.exceptions.includes(slot.thisWeekDate);
 
   return (
-    <Card className={cn("flex flex-col gap-2 border-l-4 p-3.5", BORDER[state])}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-baseline gap-2">
-          <span className="font-medium tabular-nums">{formatRange(slot.start_time, slot.end_time)}</span>
-          <span className="text-xs text-muted-foreground">· {formatDayMonth(slot.thisWeekDate)}</span>
-        </div>
-        {slot.payers.length === 0 && (
-          <span className="text-xs text-muted-foreground">цена не задана</span>
-        )}
+    <Card
+      className={cn(
+        "flex flex-col gap-1.5 border-l-4 p-2.5 text-sm",
+        BORDER[state],
+        slot.skipped && "opacity-50",
+      )}
+    >
+      <div className="flex items-center justify-between gap-1">
+        <span className="font-medium tabular-nums">{formatRange(slot.start_time, slot.end_time)}</span>
+        <button
+          onClick={() => onToggle(slot.id, slot.date, !slot.skipped)}
+          className={cn(
+            "rounded p-1 transition-colors hover:bg-foreground/10",
+            slot.skipped ? "text-amber-600" : "text-muted-foreground",
+          )}
+          title={slot.skipped ? "Вернуть урок" : "Урока не было"}
+        >
+          {slot.skipped ? <RotateCcw className="size-3.5" /> : <CalendarOff className="size-3.5" />}
+        </button>
       </div>
 
-      {slot.payers.map((p) => (
-        <div key={p.student_id} className="flex items-center gap-2 text-sm">
-          <span
-            className={cn(
-              "size-2 shrink-0 rounded-full",
-              p.status === "paid" ? "bg-emerald-500" : "bg-red-500",
-            )}
-          />
-          <span className="flex-1 truncate">{p.name}</span>
-          <span
-            className={cn(
-              "tabular-nums text-xs",
-              p.status === "paid"
-                ? "text-emerald-600 dark:text-emerald-300"
-                : "text-red-600 dark:text-red-300",
-            )}
-          >
-            {p.status === "paid" ? "оплачено" : "долг"} · {formatMoney(p.balanceKopecks)}
-          </span>
-        </div>
-      ))}
-
-      {/* Урока не было */}
-      <div className="flex flex-wrap items-center gap-2 border-t pt-2">
-        {thisWeekSkipped ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-amber-600"
-            onClick={() => onToggle(slot.id, slot.thisWeekDate, false)}
-          >
-            <RotateCcw className="size-3.5" /> Вернуть урок ({formatDayMonth(slot.thisWeekDate)})
-          </Button>
-        ) : (
-          <>
-            <Input
-              type="date"
-              value={customDate}
-              onChange={(e) => setCustomDate(e.target.value)}
-              className="h-8 w-40"
+      {slot.skipped ? (
+        <span className="text-xs text-amber-600">урока не было</span>
+      ) : slot.payers.length === 0 ? (
+        <span className="text-xs text-muted-foreground">цена не задана</span>
+      ) : (
+        slot.payers.map((p) => (
+          <div key={p.student_id} className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                "size-2 shrink-0 rounded-full",
+                p.status === "paid" ? "bg-emerald-500" : "bg-red-500",
+              )}
             />
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={() => onToggle(slot.id, customDate, true)}
+            <span className="flex-1 truncate text-xs">{p.name}</span>
+            <span
+              className={cn(
+                "shrink-0 text-[11px] tabular-nums",
+                p.status === "paid" ? "text-emerald-600 dark:text-emerald-300" : "text-red-600 dark:text-red-300",
+              )}
             >
-              <CalendarOff className="size-3.5" /> Урока не было
-            </Button>
-          </>
-        )}
-      </div>
-
-      {/* Отмеченные даты */}
-      {slot.exceptions.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {slot.exceptions.map((d) => (
-            <button
-              key={d}
-              onClick={() => onToggle(slot.id, d, false)}
-              className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-500/25 dark:text-amber-300"
-              title="Снять отметку «урока не было»"
-            >
-              {formatDayMonth(d)} · не было ✕
-            </button>
-          ))}
-        </div>
+              {formatMoney(p.balanceKopecks)}
+            </span>
+          </div>
+        ))
       )}
     </Card>
   );

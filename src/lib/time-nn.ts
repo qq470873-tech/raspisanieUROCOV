@@ -71,6 +71,16 @@ export function dateForWeekdayThisWeek(weekday: number): string {
   return addDays(monday, weekday - 1);
 }
 
+/** Понедельник недели, в которую попадает дата. */
+export function mondayOf(dateStr: string): string {
+  return addDays(dateStr, -(weekdayOf(dateStr) - 1));
+}
+
+/** Понедельник текущей недели по НН. */
+export function currentWeekMonday(): string {
+  return mondayOf(todayNN());
+}
+
 /** "YYYY-MM-DD" -> "8 сен" для компактного показа. */
 export function formatDayMonth(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);

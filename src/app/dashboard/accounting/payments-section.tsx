@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CalendarClock, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, History, Plus, Trash2 } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { formatMoney, todayNN } from "@/lib/time-nn";
@@ -181,8 +181,71 @@ function StudentDetail({
         )}
       </Card>
 
+      <Ledger studentId={student.studentId} />
+
       <Settings student={student} onMutate={onMutate} />
     </div>
+  );
+}
+
+function Ledger({ studentId }: { studentId: string }) {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<{ date: string; label: string; amountKopecks: number }[] | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setOpen(false);
+    setEntries(null);
+  }, [studentId]);
+
+  async function load() {
+    setOpen(true);
+    if (entries) return;
+    try {
+      const res = await fetch(`/api/accounting/ledger?student=${studentId}`);
+      if (!res.ok) throw new Error("Не удалось загрузить");
+      setEntries((await res.json()).entries);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    }
+  }
+
+  return (
+    <Card className="flex flex-col gap-2 p-4">
+      <button
+        onClick={() => (open ? setOpen(false) : load())}
+        className="flex items-center gap-1.5 text-sm font-semibold"
+      >
+        <History className="size-4 text-muted-foreground" /> История баланса {open ? "▾" : "▸"}
+      </button>
+      {open &&
+        (entries === null ? (
+          <p className="text-sm text-muted-foreground">Загрузка…</p>
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Изменений пока нет.</p>
+        ) : (
+          <ul className="flex max-h-80 flex-col divide-y overflow-y-auto">
+            {entries.map((e, i) => (
+              <li key={i} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+                <div className="min-w-0">
+                  <span className="tabular-nums">{e.date}</span>
+                  <span className="ml-2 text-muted-foreground">{e.label}</span>
+                </div>
+                <span
+                  className={cn(
+                    "font-medium tabular-nums",
+                    e.amountKopecks < 0 ? "text-red-500" : "text-emerald-600 dark:text-emerald-300",
+                  )}
+                >
+                  {e.amountKopecks < 0 ? "" : "+"}
+                  {formatMoney(e.amountKopecks)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </Card>
   );
 }
 

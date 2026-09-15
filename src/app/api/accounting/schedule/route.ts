@@ -1,15 +1,19 @@
 import { badRequest, json } from "@/lib/api";
 import { guardAccounting } from "@/lib/accounting-lock";
 import { getMoneySchedule, setException } from "@/lib/accounting";
-
-/** Данные «Денежного расписания». */
-export async function GET() {
-  const denied = await guardAccounting();
-  if (denied) return denied;
-  return json(await getMoneySchedule());
-}
+import { currentWeekMonday, mondayOf } from "@/lib/time-nn";
 
 const isDate = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/** Денежное расписание на неделю (?week=YYYY-MM-DD, по умолчанию — текущая). */
+export async function GET(request: Request) {
+  const denied = await guardAccounting();
+  if (denied) return denied;
+  const url = new URL(request.url);
+  const week = url.searchParams.get("week");
+  const weekMonday = isDate(week) ? mondayOf(week) : currentWeekMonday();
+  return json(await getMoneySchedule(weekMonday));
+}
 
 /** Отметить/снять «урока не было». */
 export async function POST(request: Request) {
