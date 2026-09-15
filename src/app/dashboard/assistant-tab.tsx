@@ -279,6 +279,8 @@ export function AssistantTab() {
             onChange={(e) => setInput(e.target.value)}
             placeholder={`Напишите ${ASSISTANT_NAME}…`}
             disabled={busy || !activeId}
+            autoComplete="off"
+            name="lucy-message"
           />
           <Button type="submit" size="icon" disabled={busy || !input.trim()} title="Отправить">
             <Send className="size-4" />
