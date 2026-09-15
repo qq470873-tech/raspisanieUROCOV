@@ -519,12 +519,14 @@ export async function getMoneySchedule(weekMonday: string): Promise<MoneySchedul
     };
   });
 
-  // Доход (проведённые/запланированные занятия × цена) за неделю и за месяц.
+  // Доход = стоимость занятий за период (кол-во × цена), считая с даты начала ученика.
   const income = (from: string, to: string) => {
     let sum = 0;
     for (const p of flat) {
+      const anchor = anchorOf(p.student_id);
+      const effFrom = anchor > from ? anchor : from;
       const skips = skipsFor(p.slot.id, p.student_id);
-      sum += weekdayDatesInRange(from, to, p.slot.weekday).filter((d) => !skips.has(d)).length * p.price_kopecks;
+      sum += weekdayDatesInRange(effFrom, to, p.slot.weekday).filter((d) => !skips.has(d)).length * p.price_kopecks;
     }
     return sum;
   };
