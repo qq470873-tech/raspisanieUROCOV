@@ -1,30 +1,32 @@
 import { badRequest, guardTeacher, json } from "@/lib/api";
 import { askAssistant, type ChatMessage } from "@/lib/assistant";
+import { addMessage, autoTitle, getMessages } from "@/lib/chat";
 
-/** Чат с ИИ-ассистентом Люси. Доступен только преподавателю. */
+/** Отправка сообщения в диалог: сохраняет пару вопрос-ответ и возвращает ответ Люси. */
 export async function POST(request: Request) {
   const denied = await guardTeacher();
   if (denied) return denied;
 
-  const body = (await request.json().catch(() => null)) as { messages?: unknown } | null;
-  const raw = body?.messages;
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return badRequest("Нет сообщений");
-  }
+  const body = (await request.json().catch(() => null)) as
+    | { conversation_id?: unknown; text?: unknown }
+    | null;
+  const conversationId = typeof body?.conversation_id === "string" ? body.conversation_id : "";
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!conversationId) return badRequest("Нет диалога");
+  if (!text) return badRequest("Пустое сообщение");
 
-  const messages: ChatMessage[] = [];
-  for (const m of raw) {
-    const role = (m as ChatMessage)?.role;
-    const text = (m as ChatMessage)?.text;
-    if ((role !== "user" && role !== "model") || typeof text !== "string" || !text.trim()) {
-      return badRequest("Некорректное сообщение");
-    }
-    messages.push({ role, text: text.slice(0, 4000) });
-  }
+  const prior = await getMessages(conversationId);
+  const history: ChatMessage[] = [
+    ...prior.map((m) => ({ role: m.role, text: m.text })),
+    { role: "user" as const, text: text.slice(0, 4000) },
+  ];
 
   try {
-    const reply = await askAssistant(messages.slice(-20));
-    return json({ reply });
+    const reply = await askAssistant(history.slice(-20));
+    await addMessage(conversationId, "user", text.slice(0, 4000));
+    await addMessage(conversationId, "model", reply);
+    const title = await autoTitle(conversationId, text);
+    return json({ reply, title });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "Ошибка ассистента" }, 502);
   }

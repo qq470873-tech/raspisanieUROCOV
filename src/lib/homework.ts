@@ -46,3 +46,18 @@ export async function deleteHomework(id: string): Promise<void> {
   const { error } = await db.from("homework").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+/** Последние ДЗ (с именем ученика) — для контекста ИИ-ассистента. */
+export async function recentHomework(limit = 60): Promise<{ name: string; date: string; text: string }[]> {
+  const db = supabaseAdmin();
+  const { data } = await db
+    .from("homework")
+    .select("date, text, students(name)")
+    .order("date", { ascending: false })
+    .limit(limit);
+  type Row = { date: string; text: string; students: { name: string } | { name: string }[] | null };
+  return ((data ?? []) as Row[]).map((h) => {
+    const st = Array.isArray(h.students) ? h.students[0] : h.students;
+    return { name: st?.name ?? "—", date: h.date, text: h.text };
+  });
+}

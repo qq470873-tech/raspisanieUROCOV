@@ -8,7 +8,6 @@ import {
   logEventFor,
   rejectBooking,
 } from "@/lib/queries";
-import { notifyStudentDecision } from "@/lib/email";
 
 /** Действия преподавателя: подтвердить / отклонить / удалить / освободить. */
 export async function POST(request: Request) {
@@ -26,18 +25,14 @@ export async function POST(request: Request) {
   switch (action) {
     case "confirm": {
       const { rejected } = await confirmBooking(booking_id);
-      await notifyStudentDecision(booking, booking.slot, "confirmed");
       await logEventFor(booking, "confirmed", "teacher");
-      // Пересекающимся заявкам — авто-отказ (уведомляем и логируем каждого).
       for (const r of rejected) {
-        await notifyStudentDecision(r, r.slot, "rejected");
         await logEventFor(r, "auto_rejected", "teacher");
       }
       break;
     }
     case "reject":
       await rejectBooking(booking_id);
-      await notifyStudentDecision(booking, booking.slot, "rejected");
       await logEventFor(booking, "rejected", "teacher");
       break;
     case "cancel":
