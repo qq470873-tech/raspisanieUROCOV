@@ -21,6 +21,13 @@ export const env = {
   teacherPassword: () => required("TEACHER_PASSWORD", process.env.TEACHER_PASSWORD),
   sessionSecret: () => required("SESSION_SECRET", process.env.SESSION_SECRET),
 
+  // ИИ-ассистент (Gemini)
+  geminiKey: () => required("GEMINI_API_KEY", process.env.GEMINI_API_KEY),
+  geminiModel: () => process.env.GEMINI_MODEL || "gemini-3.6-flash",
+
+  // Пароль на вкладку «Бухгалтерия» (второй замок поверх входа преподавателя).
+  accountingPassword: () => process.env.ACCOUNTING_PASSWORD || "zaqlondon",
+
   // Email (опционально)
   resendApiKey: () => process.env.RESEND_API_KEY || "",
   resendFrom: () => process.env.RESEND_FROM || "Расписание <onboarding@resend.dev>",
