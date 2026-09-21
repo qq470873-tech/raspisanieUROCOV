@@ -12,6 +12,14 @@ export interface LessonPayer {
   price_kopecks: number;
 }
 
+/** Плательщик на слоте независимого расписания бухгалтерии. */
+export interface AccountingPayer {
+  id: string;
+  slot_id: string;
+  student_id: string;
+  price_kopecks: number;
+}
+
 export interface Payment {
   id: string;
   student_id: string;
@@ -49,9 +57,9 @@ async function selectAll<T>(table: string): Promise<T[]> {
   return (data ?? []) as T[];
 }
 
-// ── Плательщики из расписания ──────────────────────────────────────────────────
-// Плательщики берутся из подтверждённых броней (реальное расписание), а
-// lesson_payers хранит только переопределения цены и дополнительных плательщиков.
+// ── Плательщики из расписания бухгалтерии ───────────────────────────────────────
+// Расписание бухгалтерии независимо от основного: свои слоты (accounting_slots)
+// и свои плательщики (accounting_payers), которые мама ведёт вручную.
 
 interface FlatPayer {
   slot: Slot;
@@ -61,13 +69,6 @@ interface FlatPayer {
   source: "schedule" | "extra";
 }
 
-interface ConfirmedBooking {
-  slot_id: string;
-  student_id: string | null;
-  partner_student_id: string | null;
-  partner2_student_id: string | null;
-}
-
 async function getFlatPayers(): Promise<{
   flat: FlatPayer[];
   activeSlots: Slot[];
@@ -75,58 +76,32 @@ async function getFlatPayers(): Promise<{
   defaultPriceKopecks: number;
 }> {
   const db = supabaseAdmin();
-  const [slots, overrides, students, settings, bookings] = await Promise.all([
-    selectAll<Slot>("slots"),
-    selectAll<LessonPayer>("lesson_payers"),
+  const [slots, payers, students, settings] = await Promise.all([
+    selectAll<Slot>("accounting_slots"),
+    selectAll<AccountingPayer>("accounting_payers"),
     db.from("students").select("id, name").then((r) => (r.data ?? []) as { id: string; name: string }[]),
     db.from("settings").select("default_price_kopecks").eq("id", 1).maybeSingle(),
-    db
-      .from("bookings")
-      .select("slot_id, student_id, partner_student_id, partner2_student_id")
-      .eq("status", "confirmed")
-      .then((r) => (r.data ?? []) as ConfirmedBooking[]),
   ]);
 
   const defaultPrice =
     (settings.data as { default_price_kopecks: number } | null)?.default_price_kopecks ?? 0;
   const nameMap = new Map(students.map((s) => [s.id, s.name]));
-  const priceMap = new Map(overrides.map((o) => [`${o.slot_id}|${o.student_id}`, o.price_kopecks]));
   const activeSlots = slots
     .filter((s) => s.is_active)
     .sort((a, b) => a.weekday - b.weekday || timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
+  const slotById = new Map(activeSlots.map((s) => [s.id, s]));
 
   const flat: FlatPayer[] = [];
-  for (const slot of activeSlots) {
-    const seen = new Set<string>();
-    const price = (studentId: string) =>
-      priceMap.get(`${slot.id}|${studentId}`) ?? defaultPrice;
-
-    // Участники подтверждённых броней на этом слоте.
-    for (const b of bookings.filter((x) => x.slot_id === slot.id)) {
-      for (const id of [b.student_id, b.partner_student_id, b.partner2_student_id]) {
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        flat.push({
-          slot,
-          student_id: id,
-          name: nameMap.get(id) ?? "—",
-          price_kopecks: price(id),
-          source: "schedule",
-        });
-      }
-    }
-    // Дополнительные плательщики (не участники брони).
-    for (const o of overrides.filter((x) => x.slot_id === slot.id)) {
-      if (seen.has(o.student_id)) continue;
-      seen.add(o.student_id);
-      flat.push({
-        slot,
-        student_id: o.student_id,
-        name: nameMap.get(o.student_id) ?? "—",
-        price_kopecks: o.price_kopecks,
-        source: "extra",
-      });
-    }
+  for (const p of payers) {
+    const slot = slotById.get(p.slot_id);
+    if (!slot) continue; // плательщик на удалённом/неактивном слоте — пропускаем
+    flat.push({
+      slot,
+      student_id: p.student_id,
+      name: nameMap.get(p.student_id) ?? "—",
+      price_kopecks: p.price_kopecks,
+      source: "extra",
+    });
   }
 
   return { flat, activeSlots, students, defaultPriceKopecks: defaultPrice };
@@ -186,7 +161,7 @@ export async function getPricingData(): Promise<PricingData> {
   };
 }
 
-/** Задаёт/обновляет цену плательщика на слоте (переопределение). */
+/** Задаёт/обновляет цену плательщика на слоте бухгалтерии. */
 export async function upsertPayer(
   slotId: string,
   studentId: string,
@@ -194,7 +169,7 @@ export async function upsertPayer(
 ): Promise<void> {
   const db = supabaseAdmin();
   const { error } = await db
-    .from("lesson_payers")
+    .from("accounting_payers")
     .upsert(
       { slot_id: slotId, student_id: studentId, price_kopecks: priceKopecks },
       { onConflict: "slot_id,student_id" },
@@ -203,7 +178,7 @@ export async function upsertPayer(
   await ensureBilling(studentId);
 }
 
-/** Добавляет доп. плательщика по имени (создаёт ученика при необходимости). */
+/** Добавляет плательщика по имени (создаёт ученика при необходимости). */
 export async function addPayerByName(
   slotId: string,
   name: string,
@@ -215,14 +190,34 @@ export async function addPayerByName(
   await upsertPayer(slotId, student.id, priceKopecks);
 }
 
-/** Убирает переопределение/доп. плательщика со слота (участник брони останется по дефолтной цене). */
+/** Убирает плательщика со слота бухгалтерии. */
 export async function removePayer(slotId: string, studentId: string): Promise<void> {
   const db = supabaseAdmin();
   const { error } = await db
-    .from("lesson_payers")
+    .from("accounting_payers")
     .delete()
     .eq("slot_id", slotId)
     .eq("student_id", studentId);
+  if (error) throw new Error(error.message);
+}
+
+/** Создаёт слот (день недели + время) в расписании бухгалтерии. */
+export async function createAccountingSlot(
+  weekday: number,
+  startTime: string,
+  endTime: string,
+): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db
+    .from("accounting_slots")
+    .insert({ weekday, start_time: startTime, end_time: endTime });
+  if (error) throw new Error(error.message);
+}
+
+/** Удаляет слот бухгалтерии вместе с плательщиками и отметками «урока не было». */
+export async function deleteAccountingSlot(slotId: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db.from("accounting_slots").delete().eq("id", slotId);
   if (error) throw new Error(error.message);
 }
 

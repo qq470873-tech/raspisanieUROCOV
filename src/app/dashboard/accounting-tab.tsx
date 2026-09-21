@@ -37,7 +37,7 @@ export function AccountingTab() {
       <TabsList>
         <TabsTrigger value="schedule">Денежное расписание</TabsTrigger>
         <TabsTrigger value="payments">Оплата занятий</TabsTrigger>
-        <TabsTrigger value="pricing">Настройка стоимости</TabsTrigger>
+        <TabsTrigger value="pricing">Расписание и цены</TabsTrigger>
       </TabsList>
 
       <TabsContent value="schedule" className="mt-4">

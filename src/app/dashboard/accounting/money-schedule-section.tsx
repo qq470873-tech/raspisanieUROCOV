@@ -212,7 +212,7 @@ function SlotCard({
       {slot.skipped ? (
         <span className="text-xs text-amber-600">урока не было</span>
       ) : slot.payers.length === 0 ? (
-        <span className="text-xs text-muted-foreground">цена не задана</span>
+        <span className="text-xs text-muted-foreground">нет учеников</span>
       ) : (
         slot.payers.map((p) => (
           <div key={p.student_id} className="flex items-center gap-1.5">

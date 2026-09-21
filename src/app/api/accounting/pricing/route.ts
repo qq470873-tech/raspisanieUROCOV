@@ -2,11 +2,14 @@ import { badRequest, json } from "@/lib/api";
 import { guardAccounting } from "@/lib/accounting-lock";
 import {
   addPayerByName,
+  createAccountingSlot,
+  deleteAccountingSlot,
   getPricingData,
   removePayer,
   setDefaultPrice,
   upsertPayer,
 } from "@/lib/accounting";
+import { normalizeTime } from "@/lib/domain";
 
 /** Данные раздела «Настройка стоимости». */
 export async function GET() {
@@ -21,6 +24,9 @@ type Body = {
   student_id?: string;
   name?: string;
   price_kopecks?: number;
+  weekday?: number;
+  start_time?: string;
+  end_time?: string;
 };
 
 /** Мутации цен: upsert / add (по имени) / remove / default. */
@@ -46,6 +52,21 @@ export async function POST(request: Request) {
       case "remove":
         if (!b.slot_id || !b.student_id) return badRequest("Не хватает данных");
         await removePayer(b.slot_id, b.student_id);
+        break;
+      case "slot_add": {
+        const weekday = Number(b.weekday);
+        if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7)
+          return badRequest("Укажите день недели");
+        if (!b.start_time || !b.end_time) return badRequest("Укажите время");
+        const start = normalizeTime(b.start_time);
+        const end = normalizeTime(b.end_time);
+        if (end <= start) return badRequest("Конец должен быть позже начала");
+        await createAccountingSlot(weekday, start, end);
+        break;
+      }
+      case "slot_delete":
+        if (!b.slot_id) return badRequest("Не хватает данных");
+        await deleteAccountingSlot(b.slot_id);
         break;
       case "default":
         await setDefaultPrice(price);
