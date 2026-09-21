@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CalendarOff, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
+import { CalendarOff, CalendarPlus, Check, ChevronLeft, ChevronRight, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { apiPost } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { WEEKDAYS, formatRange } from "@/lib/domain";
@@ -10,6 +10,17 @@ import { addDays, currentWeekMonday, formatDayMonth, formatMoney } from "@/lib/t
 import type { MoneySlot } from "@/lib/accounting";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+/** Рубли -> копейки. */
+const toKop = (rub: string) => Math.max(0, Math.round(parseFloat(rub.replace(",", ".")) * 100 || 0));
 
 type SlotState = "paid" | "partial" | "debt" | "none";
 
@@ -36,6 +47,8 @@ export function MoneyScheduleSection() {
   const [monthIncome, setMonthIncome] = useState(0);
   const [monthLabel, setMonthLabel] = useState("");
   const [debtors, setDebtors] = useState<{ name: string; amountKopecks: number }[]>([]);
+  const [students, setStudents] = useState<{ id: string; name: string }[]>([]);
+  const [defaultPrice, setDefaultPrice] = useState(0);
   const [loading, setLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -52,6 +65,8 @@ export function MoneyScheduleSection() {
         setMonthIncome(data.monthIncomeKopecks ?? 0);
         setMonthLabel(data.monthLabel ?? "");
         setDebtors(data.debtors ?? []);
+        setStudents(data.students ?? []);
+        setDefaultPrice(data.defaultPriceKopecks ?? 0);
       })
       .catch((e) => !cancelled && toast.error(e instanceof Error ? e.message : "Ошибка"))
       .finally(() => !cancelled && setLoading(false));
@@ -62,6 +77,12 @@ export function MoneyScheduleSection() {
 
   async function toggleException(slotId: string, date: string, on: boolean) {
     await apiPost("/api/accounting/schedule", { slot_id: slotId, date, on });
+    setReloadToken((t) => t + 1);
+  }
+
+  // Мутации расписания бухгалтерии (через тот же роут, что и «Расписание и цены»).
+  async function mutateSchedule(body: Record<string, unknown>) {
+    await apiPost("/api/accounting/pricing", body);
     setReloadToken((t) => t + 1);
   }
 
@@ -139,8 +160,14 @@ export function MoneyScheduleSection() {
         </Card>
       </div>
 
+      <AddSlot onAdd={mutateSchedule} />
+
       {loading && slots.length === 0 ? (
         <Card className="p-8 text-center text-muted-foreground">Загрузка…</Card>
+      ) : slots.length === 0 ? (
+        <Card className="p-8 text-center text-muted-foreground">
+          Пока нет занятий. Добавьте занятие выше и впишите учеников.
+        </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {WEEKDAYS.map((day) => {
@@ -152,7 +179,14 @@ export function MoneyScheduleSection() {
                   {day.short} · {daySlots[0] ? formatDayMonth(daySlots[0].date) : ""}
                 </h3>
                 {daySlots.map((slot) => (
-                  <SlotCard key={slot.id} slot={slot} onToggle={toggleException} />
+                  <SlotCard
+                    key={slot.id}
+                    slot={slot}
+                    students={students}
+                    defaultPrice={defaultPrice}
+                    onToggle={toggleException}
+                    onMutate={mutateSchedule}
+                  />
                 ))}
               </div>
             );
@@ -178,14 +212,111 @@ function Legend() {
   );
 }
 
+function AddSlot({ onAdd }: { onAdd: (body: Record<string, unknown>) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [weekday, setWeekday] = useState("1");
+  const [start, setStart] = useState("15:00");
+  const [end, setEnd] = useState("16:00");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!start || !end) return toast.error("Укажите время");
+    setBusy(true);
+    try {
+      await onAdd({ action: "slot_add", weekday: Number(weekday), start_time: start, end_time: end });
+      toast.success("Занятие добавлено");
+      setOpen(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div>
+        <Button variant="outline" className="gap-1.5" onClick={() => setOpen(true)}>
+          <CalendarPlus className="size-4" /> Добавить занятие
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Card className="flex flex-wrap items-end gap-2 p-3">
+      <Select value={weekday} onValueChange={(v) => v && setWeekday(v)}>
+        <SelectTrigger className="w-36">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {WEEKDAYS.map((d) => (
+            <SelectItem key={d.value} value={String(d.value)}>
+              {d.long}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="w-28" />
+      <span className="pb-2 text-muted-foreground">–</span>
+      <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="w-28" />
+      <Button className="gap-1" disabled={busy} onClick={submit}>
+        <Plus className="size-4" /> Добавить
+      </Button>
+      <Button variant="ghost" onClick={() => setOpen(false)}>
+        Отмена
+      </Button>
+    </Card>
+  );
+}
+
 function SlotCard({
   slot,
+  students,
+  defaultPrice,
   onToggle,
+  onMutate,
 }: {
   slot: MoneySlot;
+  students: { id: string; name: string }[];
+  defaultPrice: number;
   onToggle: (slotId: string, date: string, on: boolean) => Promise<void>;
+  onMutate: (body: Record<string, unknown>) => Promise<void>;
 }) {
   const state = slotState(slot);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPrice, setNewPrice] = useState((defaultPrice / 100).toString());
+
+  const suggestions = useMemo(
+    () => students.filter((s) => !slot.payers.some((p) => p.student_id === s.id)),
+    [students, slot.payers],
+  );
+
+  async function addStudent() {
+    if (!newName.trim()) return toast.error("Укажите имя");
+    try {
+      await onMutate({ action: "add", slot_id: slot.id, name: newName.trim(), price_kopecks: toKop(newPrice) });
+      toast.success("Ученик добавлен");
+      setNewName("");
+      setNewPrice((defaultPrice / 100).toString());
+      setAdding(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    }
+  }
+
+  async function removeStudent(studentId: string, name: string) {
+    if (!confirm(`Убрать ${name} с этого занятия?`)) return;
+    await onMutate({ action: "remove", slot_id: slot.id, student_id: studentId });
+    toast.success("Ученик убран");
+  }
+
+  async function deleteSlot() {
+    if (slot.payers.length > 0 && !confirm("Удалить занятие вместе с учениками?")) return;
+    await onMutate({ action: "slot_delete", slot_id: slot.id });
+    toast.success("Занятие удалено");
+  }
 
   return (
     <Card
@@ -197,21 +328,37 @@ function SlotCard({
     >
       <div className="flex items-center justify-between gap-1">
         <span className="font-medium tabular-nums">{formatRange(slot.start_time, slot.end_time)}</span>
-        <button
-          onClick={() => onToggle(slot.id, slot.date, !slot.skipped)}
-          className={cn(
-            "rounded p-1 transition-colors hover:bg-foreground/10",
-            slot.skipped ? "text-amber-600" : "text-muted-foreground",
-          )}
-          title={slot.skipped ? "Вернуть урок" : "Урока не было"}
-        >
-          {slot.skipped ? <RotateCcw className="size-3.5" /> : <CalendarOff className="size-3.5" />}
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={() => setAdding((v) => !v)}
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-primary"
+            title="Добавить ученика"
+          >
+            <Plus className="size-3.5" />
+          </button>
+          <button
+            onClick={() => onToggle(slot.id, slot.date, !slot.skipped)}
+            className={cn(
+              "rounded p-1 transition-colors hover:bg-foreground/10",
+              slot.skipped ? "text-amber-600" : "text-muted-foreground",
+            )}
+            title={slot.skipped ? "Вернуть урок" : "Урока не было"}
+          >
+            {slot.skipped ? <RotateCcw className="size-3.5" /> : <CalendarOff className="size-3.5" />}
+          </button>
+          <button
+            onClick={deleteSlot}
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-red-600"
+            title="Удалить занятие"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
       </div>
 
       {slot.skipped ? (
         <span className="text-xs text-amber-600">урока не было</span>
-      ) : slot.payers.length === 0 ? (
+      ) : slot.payers.length === 0 && !adding ? (
         <span className="text-xs text-muted-foreground">нет учеников</span>
       ) : (
         slot.payers.map((p) => (
@@ -231,8 +378,48 @@ function SlotCard({
             >
               {p.status === "paid" ? "оплачено" : "долг"}
             </span>
+            <button
+              onClick={() => removeStudent(p.student_id, p.name)}
+              className="rounded p-0.5 text-muted-foreground transition-colors hover:text-red-600"
+              title="Убрать ученика"
+            >
+              <X className="size-3.5" />
+            </button>
           </div>
         ))
+      )}
+
+      {adding && (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-muted/50 p-1.5">
+          <Input
+            list={`money-students-${slot.id}`}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addStudent()}
+            placeholder="Имя ученика"
+            className="h-8 flex-1 min-w-28"
+            autoFocus
+          />
+          <datalist id={`money-students-${slot.id}`}>
+            {suggestions.map((s) => (
+              <option key={s.id} value={s.name} />
+            ))}
+          </datalist>
+          <Input
+            value={newPrice}
+            onChange={(e) => setNewPrice(e.target.value)}
+            inputMode="decimal"
+            className="h-8 w-16"
+            title="Цена, ₽"
+          />
+          <span className="text-xs text-muted-foreground">₽</span>
+          <Button size="icon-sm" onClick={addStudent} title="Добавить">
+            <Check className="size-4" />
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => setAdding(false)} title="Отмена">
+            <X className="size-4" />
+          </Button>
+        </div>
       )}
     </Card>
   );

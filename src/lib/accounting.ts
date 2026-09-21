@@ -448,6 +448,8 @@ export interface MoneyScheduleData {
   monthIncomeKopecks: number;
   monthLabel: string;
   debtors: { name: string; amountKopecks: number }[];
+  students: { id: string; name: string }[];
+  defaultPriceKopecks: number;
 }
 
 /**
@@ -457,7 +459,7 @@ export interface MoneyScheduleData {
  * деньги, и краснеют ровно с того, на которое уже не хватило.
  */
 export async function getMoneySchedule(weekMonday: string): Promise<MoneyScheduleData> {
-  const [{ flat, activeSlots }, payments, exceptions, billing, balancesNow] = await Promise.all([
+  const [{ flat, activeSlots, students, defaultPriceKopecks }, payments, exceptions, billing, balancesNow] = await Promise.all([
     getFlatPayers(),
     selectAll<Payment>("payments"),
     selectAll<LessonException>("lesson_exceptions"),
@@ -547,6 +549,8 @@ export async function getMoneySchedule(weekMonday: string): Promise<MoneySchedul
     monthIncomeKopecks: income(monthFrom, monthTo),
     monthLabel,
     debtors,
+    students: [...students].sort((a, b) => a.name.localeCompare(b.name, "ru")),
+    defaultPriceKopecks,
   };
 }
 
