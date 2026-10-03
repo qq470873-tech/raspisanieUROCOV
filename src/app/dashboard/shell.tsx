@@ -6,6 +6,7 @@ import {
   BookOpen,
   CalendarDays,
   GraduationCap,
+  Heart,
   LogOut,
   Menu,
   PanelLeftClose,
@@ -27,9 +28,10 @@ import { StudentsTab } from "./students-tab";
 import { AccountingTab } from "./accounting-tab";
 import { HomeworkTab } from "./homework-tab";
 import { AssistantTab } from "./assistant-tab";
+import { TeachersDayTab } from "./teachers-day-tab";
 import type { StudentOption } from "./booking-dialogs";
 
-type ViewKey = "assistant" | "schedule" | "accounting" | "homework" | "students";
+type ViewKey = "teachersDay" | "assistant" | "schedule" | "accounting" | "homework" | "students";
 
 interface NavItem {
   key: ViewKey;
@@ -47,6 +49,7 @@ interface Props {
 }
 
 const VIEW_TITLES: Record<ViewKey, string> = {
+  teachersDay: "С Днём учителя! 💐",
   assistant: "ИИ-ассистент",
   schedule: "Расписание",
   accounting: "Бухгалтерия",
@@ -55,6 +58,7 @@ const VIEW_TITLES: Record<ViewKey, string> = {
 };
 
 const NAV: NavItem[] = [
+  { key: "teachersDay", label: "День учителя", icon: Heart },
   { key: "assistant", label: "ИИ-ассистент", icon: Sparkles },
   { key: "schedule", label: "Расписание", icon: CalendarDays },
   { key: "accounting", label: "Бухгалтерия", icon: Wallet },
@@ -126,6 +130,7 @@ export function DashboardShell({ slots, overview, history }: Props) {
         {NAV.map((item) => {
           const Icon = item.icon;
           const isActive = active === item.key;
+          const special = item.key === "teachersDay";
           return (
             <button
               key={item.key}
@@ -134,7 +139,9 @@ export function DashboardShell({ slots, overview, history }: Props) {
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                 !full && "justify-center px-0",
-                isActive
+                special
+                  ? "bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-sm hover:from-rose-600 hover:to-pink-600"
+                  : isActive
                   ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
                   : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
@@ -196,6 +203,7 @@ export function DashboardShell({ slots, overview, history }: Props) {
           </div>
 
           <div>
+            {active === "teachersDay" && <TeachersDayTab />}
             {active === "assistant" && <AssistantTab />}
             {active === "schedule" && (
               <ScheduleTab
